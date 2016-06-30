@@ -4,7 +4,7 @@ library(tidyr)
 library(dplyr)
 
 
-#### NOTE: This file contains some trial and error code with comments for #1 and #3; however, none of these 
+#### NOTE: This file contains some trial and error code with comments for #1 and #2; however, none of these 
 ####       reassign values back to the titanic_original; only the final answer snippets do
 
   
