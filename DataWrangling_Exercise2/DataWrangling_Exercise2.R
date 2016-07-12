@@ -76,7 +76,7 @@ library(dplyr)
             # it's easiest just to write: select * from TableName where isnull(ColumnName, '') = ''
             # all nulls are converted to a blank '' and then you find all blanks ''
             # is there something like this that can be used in R to ensure all missing values are located?
-            
+          # SS: can use substr(); also can ?grep to review
       
       # final update:
       titanic_clean$embarked <-
@@ -99,6 +99,10 @@ library(dplyr)
       # 2        Q   123
       # 3        S   916
  
+      ## Srdjan's code: 
+      func1<-function(y){if(nchar(y)==0){print("S")} else {print(y)}} 
+      titanic1<-bind_cols(select(titanic3, -embarked), transmute(titanic3,embarked_new=lapply(as.character(titanic3$embarked), func1)))
+      
       
       
 # 2: Age, fill in missing values
