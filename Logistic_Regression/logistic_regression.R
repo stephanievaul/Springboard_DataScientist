@@ -261,9 +261,10 @@ plot(allEffects(hyp.out))
      
         # get prob of everwrk by r_maritl levels & plot
         library(effects)
+        # plot(allEffects(mod_everwrk)) ## gives error due to r_maritl being categorical
         data.frame(effect("r_maritl",mod_everwrk)) # prob of everwrk for each r_maritl level
         plot(data.frame(effect("r_maritl",mod_everwrk))) # plot of above
-       
+        
         # for fun... get prob of everwrk by by age& plot
         data.frame(effect("age_p",mod_everwrk)) # prob of everwrk for each r_maritl level
         plot(data.frame(effect("age_p",mod_everwrk))) # plot of above
