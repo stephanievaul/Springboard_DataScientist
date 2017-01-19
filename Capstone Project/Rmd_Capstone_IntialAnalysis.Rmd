@@ -1,0 +1,116 @@
+---
+title: "Capstone: Initial Aanalysis on BMW Sales trends in the US"
+author: "Stephanie Vaul"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Introduction
+
+I'm going to analyze the BMW automotive sales trends in the USA over the last 10 years in order to determine which areas of the country and which models display the highest sales volume and repeat ownership (brand loyalty). In addition, I will try to identify first-time BMW owners and see which model appeal most to them. I will also look at how these trends vary between New and Used vehicles.  
+
+My client is BMW North America, a company that my employer has partnered with over the last 10 years to provide customer retention marketing. Determining which model series do well in each geographic area, as well as which series result in repeat buyers will help BMW better focus their marketing efforts for various ad campaigns by leveraging existing trends, as well as being able to extrapolate those trends in other areas of similar makeup.  
+
+I plan to use dealership sales data that my company has been collecting for the past 10+ years in order to provide sales-to-service retention marketing, e.g. initial service reminders. This data includes customer and vehicle information, along with the purchase date and type (new vs used). Some of the data includes demographic information, like birthdate and gender. I will review the data to see if there is sufficient data in order to provide trend reports based on age &/or gender.  
+
+Proprietary sales data from most BMW centers in the U.S. going back 10yrs:
+ 
+* PurchDate
+* VehYear
+* VehModel
+* TradeVIN
+* TradeVehYear
+* TradeVehModel
+* NewUsed (New, Used, Other sale)
+* PurchType (Lease, Cash, Finance)
+
+BMW also has their own designations for dealership Region and Market. I will apply this similar sorting parameters to the customer’s address in order to determine which Region a customer belongs too. 
+Because we also collect service data, I will be able to also look at how long a customer owned a vehicle by reviewing both Sales and Service data. I will first look to see if we have subsequent sales data on the vehicle – whether that be from another customer purchasing the VIN or the VIN being listed by the same customer as being traded in. If there is no additional sales record, then I can turn to the service history to see when they last serviced it. While this is not entirely accurate should the customer service at an independent station, it will provide better information than not having it at all.  
+
+My approach will be to first segment the customers into the various BMW regions, possibly down to the Market level. Their markets are based on BMW locations so this might not be to be extrapolated correctly to all customers. I will then segment out the purchases by model series and type (new or used). I want to be able to see a count of each model series and type for each year overall and within each region. Once top-level exploratory analysis has been performed, I’ll start looking into more details on customer loyalty based on repeat purchases and try to identify which are made by first-time buyers. After that, I will look to see if I can pinpoint the length of ownership for each vehicle to be able to summarize which series are kept by a single owner the longest. 
+
+
+## The Data Set
+
+To get started, let's clear our Environment and set our working directory.
+
+<!-- ## Review Environment and clear it -->
+```{r enviroment, echo=TRUE}
+  rm(list=ls())
+  ls()
+```
+<!-- # Working Directory -->
+```{r directory}
+setwd("~/_MyFiles/Data Science Workshop/Springboard_DataScientist/Capstone Project")
+```
+ <!-- getwd() -->
+
+Now let's read in our data set, which contains both BMW Dealership data, as well as customer and vehicle sales data over the past 10-years. 
+<!-- read.table ("BMWSales.txt", header = TRUE, sep = "|", quote = "\"", nrows = 500) -->
+
+```{r readdata}
+Sales <- read.table ("BMWSales.txt", header = TRUE, sep = "|", quote = "\"" )     
+```
+
+
+```{r summary}
+summary(Sales)
+``` 
+```{r head}
+head(Sales)     
+```
+
+Let's subset this data to eliminate any sales at non-BMW dealerships and remove unnecessary fields. 
+
+```{r subset}
+SalesSub <- subset(Sales, BMWDlr=="True", select = c(BMWRegion, BMWMarket, DealerID, DealerState, VINID, VIN, Year, Make, Model, eCode, PurchDate, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode, CustID, CustState, Gender, BirthDate) )
+```
+
+```{r headsub}
+head(SalesSub)     
+```
+```{r summarysub}
+summary(SalesSub)     
+```
+
+
+We need to set PurchDate, along FinanceTerm and Birthdate, to a date field before we can use it to reduce the subset to a 10 year window between 1/1/2007 and 12/31/2016. Since SQL data comes with milliseconds, we need to use the following POSIXct format: 
+
+```{r date}
+SalesSub$PurchDate <- as.POSIXct(SalesSub$PurchDate, format = "%Y-%m-%d %H:%M:%OS")
+SalesSub$FinanceTerm <- as.POSIXct(SalesSub$FinanceTerm, format = "%Y-%m-%d %H:%M:%OS")
+SalesSub$BirthDate <- as.POSIXct(SalesSub$BirthDate, format = "%Y-%m-%d %H:%M:%OS")
+```
+
+<!-- SalesSub$NewPurchDate      <- NULL -->
+
+
+```{r subset2}
+SalesSub <- subset(SalesSub, as.POSIXct(PurchDate)>=as.POSIXct('2007-01-01 00:00:00.000') & as.POSIXct(PurchDate)<as.POSIXct('2017-01-01 00:00:00.000'), select = c(BMWRegion, BMWMarket, DealerID, DealerState, VINID, VIN, Year, Make, Model, eCode, PurchDate, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode, CustID, CustState, Gender, BirthDate) )
+```
+
+```{r headsub2}
+head(SalesSub)     
+```
+
+```{r summarysub2}
+summary(SalesSub)     
+```
+We also saw from the Summary that there were different cases, all CAPS mostly and some mixed, used for the Regions. Let's set those all to CAPS. 
+
+```{r RegionToUpper}
+SalesSub2$BMWRegion <- toupper(SalesSub2$BMWRegion)     
+```
+
+# Left off here....
+
+#Pitfalls of the data set
+
+Due to possible changes in the system that a dealer uses to manage their database, the customerID's can change over time. This means that a single customer may actually have more than one CustomerID and be seen as 2 or more unique customers. More elaborate customer matching, based on name & address, could be done to try to remedy some of these issue, but there is still room for error based on how a name or address is typed into the system. For example, "Jim" vs "James" or "1234 Main Street" vs "1234 Main St.". We will also not see if the same customer purchases as more than one BMW dealership.  
+Not all BMW stores have provided access to their Sales data so the analysis is limited by dealership participation.  
+And, finally, we are not going to see all sales made to all non-BMW dealerships as well as private sales. These can skew the model by not reflecting the proper length of ownership.
