@@ -19,15 +19,20 @@ My client is BMW North America, a company that my employer has partnered with ov
 I plan to use dealership sales data that my company has been collecting for the past 10+ years in order to provide sales-to-service retention marketing, e.g. initial service reminders. This data includes customer and vehicle information, along with the purchase date and type (new vs used). Some of the data includes demographic information, like birthdate and gender. I will review the data to see if there is sufficient data in order to provide trend reports based on age &/or gender.  
 
 Proprietary sales data from most BMW centers in the U.S. going back 10yrs:
- 
-* PurchDate
-* VehYear
-* VehModel
-* TradeVIN
-* TradeVehYear
-* TradeVehModel
-* NewUsed (New, Used, Other sale)
-* PurchType (Lease, Cash, Finance)
+
+•Region (BMW Region assigned to the selling dealership by BMW, of which there are four)
+•Market (BMW Market assigned to the selling dealership by BMW)
+•PurchDate
+•VehYear
+•VehModel
+•VehECode (engine code assigned by BMW to categorize years & models)
+•TradeVIN
+•TradeVehYear
+•TradeVehModel
+•TradeVehECode
+•NewUsed (New, Used, Other sale)
+•PurchType (Lease, Cash, Finance)
+•Gender (limited data provided here)
 
 BMW also has their own designations for dealership Region and Market. I will apply this similar sorting parameters to the customer’s address in order to determine which Region a customer belongs too. 
 Because we also collect service data, I will be able to also look at how long a customer owned a vehicle by reviewing both Sales and Service data. I will first look to see if we have subsequent sales data on the vehicle – whether that be from another customer purchasing the VIN or the VIN being listed by the same customer as being traded in. If there is no additional sales record, then I can turn to the service history to see when they last serviced it. While this is not entirely accurate should the customer service at an independent station, it will provide better information than not having it at all.  
@@ -37,38 +42,47 @@ My approach will be to first segment the customers into the various BMW regions,
 
 ## The Data Set
 
-To get started, let's clear our Environment and set our working directory.
+To get started, let’s set our working directory, clear our Environment, & load our libraries.
 
-<!-- ## Review Environment and clear it -->
-```{r enviroment, echo=TRUE}
-  rm(list=ls())
-  ls()
-```
 <!-- # Working Directory -->
 ```{r directory}
 setwd("~/_MyFiles/Data Science Workshop/Springboard_DataScientist/Capstone Project")
+getwd()
 ```
- <!-- getwd() -->
+
+<!-- ## Review Environment and clear it -->
+```{r enviroment}
+  rm(list=ls())
+  ls()
+```
+
+<!-- ## Load Libraries -->
+```{r libraries}
+library(devtools)
+library(stringr)
+library(tidyr)
+library(dplyr)
+```
 
 Now let's read in our data set, which contains both BMW Dealership data, as well as customer and vehicle sales data over the past 10-years. 
 <!-- read.table ("BMWSales.txt", header = TRUE, sep = "|", quote = "\"", nrows = 500) -->
 
 ```{r readdata}
-Sales <- read.table ("BMWSales.txt", header = TRUE, sep = "|", quote = "\"" )     
+Sales <- read.table ("BMWSales.txt", header = TRUE, sep = "|", quote = "\"", stringsAsFactors = FALSE)     
 ```
 
 
-```{r summary}
+```{r summarySales}
 summary(Sales)
 ``` 
-```{r head}
-head(Sales)     
+```{r headSales, echo = FALSE}
+#head(Sales)     
 ```
 
 Let's subset this data to eliminate any sales at non-BMW dealerships and remove unnecessary fields. 
 
 ```{r subset}
-SalesSub <- subset(Sales, BMWDlr=="True", select = c(BMWRegion, BMWMarket, DealerID, DealerState, VINID, VIN, Year, Make, Model, eCode, PurchDate, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode, CustID, CustState, Gender, BirthDate) )
+SalesSub <- subset(Sales, BMWDlr=="True", select = c(BMWRegion, BMWMarket, DealerID, DealerState, VINID, VIN, Year, Make, Model, eCode, PurchDate, NewUsed, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode, CustID, CustState, Gender, BirthDate) )
 ```
 
 ```{r headsub}
@@ -86,31 +100,119 @@ SalesSub$PurchDate <- as.POSIXct(SalesSub$PurchDate, format = "%Y-%m-%d %H:%M:%O
 SalesSub$FinanceTerm <- as.POSIXct(SalesSub$FinanceTerm, format = "%Y-%m-%d %H:%M:%OS")
 SalesSub$BirthDate <- as.POSIXct(SalesSub$BirthDate, format = "%Y-%m-%d %H:%M:%OS")
 ```
+<!-- SalesSub$NewPurchDate <- NULL -->
 
-<!-- SalesSub$NewPurchDate      <- NULL -->
+Now we can go back up and recheck our Head &/or Summary to see that the fields are correctly set as datetime. Since they are, let’s go ahead and drop the original Sales table:
+```{r removeSales}
+rm(Sales)
+```
 
 
+From here we can use the PurchDate to further subset our data. In this case, let’s just replace the SalesSub table.
 ```{r subset2}
-SalesSub <- subset(SalesSub, as.POSIXct(PurchDate)>=as.POSIXct('2007-01-01 00:00:00.000') & as.POSIXct(PurchDate)<as.POSIXct('2017-01-01 00:00:00.000'), select = c(BMWRegion, BMWMarket, DealerID, DealerState, VINID, VIN, Year, Make, Model, eCode, PurchDate, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode, CustID, CustState, Gender, BirthDate) )
+SalesSub <- subset(SalesSub, as.POSIXct(PurchDate)>=as.POSIXct('2007-01-01 00:00:00.000') & as.POSIXct(PurchDate)<as.POSIXct('2017-01-01 00:00:00.000'), select = c(BMWRegion, BMWMarket, DealerID, DealerState, VINID, VIN, Year, Make, Model, eCode, PurchDate, NewUsed, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode, CustID, CustState, Gender, BirthDate) )
 ```
 
-```{r headsub2}
-head(SalesSub)     
-```
-
+If we check our summary again, we can see the new PurchDate range.
 ```{r summarysub2}
 summary(SalesSub)     
 ```
-We also saw from the Summary that there were different cases, all CAPS mostly and some mixed, used for the Regions. Let's set those all to CAPS. 
 
-```{r RegionToUpper}
-SalesSub2$BMWRegion <- toupper(SalesSub2$BMWRegion)     
+Before moving on, let’s convert this data.frame into a dplyr table.
+```{r converttotbl}
+tbl_df(SalesSub)
 ```
+
+<!-- Create Backup SalesSub <- NULL -->
+```{r Backup, echo = FALSE}
+SalesSub2 <- SalesSub
+```
+
+
+Let’s take a closer look at some of the other fields to see if anything needs to be corrected before we move on to the data analysis.
+
+BMW Region
+<!-- # distinct(select(SalesSub,BMWRegion)) -->
+```{r RegionReview}
+SalesSub %>% 
+    group_by(BMWRegion) %>% 
+    summarise(cnt = n())
+```
+
+We see that there were different cases, all CAPS mostly and some mixed, used for the Regions. Let’s set those all to CAPS. We can go back up and recheck our summary when done.
+
+
+We also saw from the Summary that there were different cases, all CAPS mostly and some mixed, used for the Regions. Let's set those all to CAPS. 
+```{r RegionToUpper}
+SalesSub$BMWRegion <- toupper(SalesSub$BMWRegion)     
+```
+
+
+Gender
+```{r GenderReview}
+SalesSub %>% 
+    group_by(Gender) %>% 
+    summarise(Cnt = n()) %>%  
+    arrange(desc(Cnt))
+```
+
+While we may not be able to effectively utilize the Gender variable due to most records missing this field, let’s go ahead and normalize it as well. We can set all the values of just M to MALE and just F to FEMALE.
+```{r GenderNormalizing}
+SalesSub$Gender <- gsub('^M$', 'MALE', SalesSub$Gender)
+SalesSub$Gender <- gsub('^F$', 'FEMALE', SalesSub$Gender)
+```
+
+Once this is complete, we need to remove all the invalid data.
+```{r GenderRemoveInvalids}
+SalesSub$Gender <- ifelse ( grepl("FEMALE|MALE", SalesSub$Gender), SalesSub$Gender, '' )
+
+SalesSub %>% 
+    group_by(Gender) %>% 
+    summarise(Cnt = n())
+```
+
+If we decide to use CustState, we’ll want to set all to Upper and then remove or fix any that are not part of the 51 US states or military codes, such as AE, AP, etc. For now, we can ignore this field.
+
+Similarly for model Year, if we decide to utilize this field, we’ll need to change any 2-digit years to 4-digit years and possibly exclude those that are missing or invalid.
+
+Let’s take another look at our data to see if we need to clean up any additional fields at this time.
+
+```{r ReviewAgain}
+head(SalesSub)
+
+SalesSub %>% 
+    group_by(BMWMarket) %>% 
+    summarise(Cnt = n())
+
+SalesSub %>% 
+    group_by(DealerState) %>% 
+    summarise(Cnt = n())
+
+SalesSub %>% 
+    group_by(Model) %>% 
+    summarise(Cnt = n())
+
+SalesSub %>% 
+    group_by(eCode) %>% 
+    summarise(Cnt = n(), MinYr = min(Year), MaxYr = max(Year))
+
+SalesSub %>% 
+    group_by(PayType) %>% 
+    summarise(Cnt = n())
+
+SalesSub %>% 
+    group_by(NewUsed) %>% 
+    summarise(Cnt = n())
+```
+
+
 
 # Left off here....
 
+
+
 #Pitfalls of the data set
 
-Due to possible changes in the system that a dealer uses to manage their database, the customerID's can change over time. This means that a single customer may actually have more than one CustomerID and be seen as 2 or more unique customers. More elaborate customer matching, based on name & address, could be done to try to remedy some of these issue, but there is still room for error based on how a name or address is typed into the system. For example, "Jim" vs "James" or "1234 Main Street" vs "1234 Main St.". We will also not see if the same customer purchases as more than one BMW dealership.  
-Not all BMW stores have provided access to their Sales data so the analysis is limited by dealership participation.  
-And, finally, we are not going to see all sales made to all non-BMW dealerships as well as private sales. These can skew the model by not reflecting the proper length of ownership.
+* Not all BMW stores have provided access to their Sales data so the analysis is limited by dealership participation.  
+* Due to possible changes in the system that a dealer uses to manage their database, the customerID's can change over time. This means that a single customer may actually have more than one CustomerID and be seen as 2 or more unique customers. More elaborate customer matching, based on name & address, could be done to try to remedy some of these issue, but there is still room for error based on how a name or address is typed into the system. For example, "Jim" vs "James" or "1234 Main Street" vs "1234 Main St.". We will also not see if the same customer purchases as more than one BMW dealership.  
+* And, finally, we are not going to see all sales made to all non-BMW dealerships as well as private sales. These can skew the model by not reflecting the proper length of ownership.
