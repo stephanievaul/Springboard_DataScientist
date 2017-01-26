@@ -53,15 +53,16 @@ getwd()
 <!-- ## Review Environment and clear it -->
 ```{r enviroment}
   rm(list=ls())
-  ls()
+#  ls()
 ```
 
 <!-- ## Load Libraries -->
-```{r libraries}
+```{r libraries, results = 'hide', message=FALSE}
 library(devtools)
 library(stringr)
 library(tidyr)
 library(dplyr)
+library(ggplot2)
 ```
 
 Now let's read in our data set, which contains both BMW Dealership data, as well as customer and vehicle sales data over the past 10-years. 
@@ -76,7 +77,7 @@ Sales <- read.table ("BMWSales.txt", header = TRUE, sep = "|", quote = "\"", str
 summary(Sales)
 ``` 
 ```{r headSales, echo = FALSE}
-#head(Sales)     
+# head(Sales)
 ```
 
 Let's subset this data to eliminate any sales at non-BMW dealerships and remove unnecessary fields. 
@@ -113,9 +114,10 @@ From here we can use the PurchDate to further subset our data. In this case, let
 SalesSub <- subset(SalesSub, as.POSIXct(PurchDate)>=as.POSIXct('2007-01-01 00:00:00.000') & as.POSIXct(PurchDate)<as.POSIXct('2017-01-01 00:00:00.000'), select = c(BMWRegion, BMWMarket, DealerID, DealerState, VINID, VIN, Year, Make, Model, eCode, PurchDate, NewUsed, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode, CustID, CustState, Gender, BirthDate) )
 ```
 
-If we check our summary again, we can see the new PurchDate range.
+If we summarize the PurchDate, we can see the new PurchDate range.
 ```{r summarysub2}
-summary(SalesSub)     
+SalesSub %>% 
+   summarise(MinPurch = min(PurchDate),MaxPurch = max(PurchDate))     
 ```
 
 Before moving on, let’s convert this data.frame into a dplyr table.
@@ -144,7 +146,11 @@ We see that there were different cases, all CAPS mostly and some mixed, used for
 
 We also saw from the Summary that there were different cases, all CAPS mostly and some mixed, used for the Regions. Let's set those all to CAPS. 
 ```{r RegionToUpper}
-SalesSub$BMWRegion <- toupper(SalesSub$BMWRegion)     
+SalesSub$BMWRegion <- toupper(SalesSub$BMWRegion)  
+
+SalesSub %>% 
+    group_by(BMWRegion) %>% 
+    summarise(cnt = n())
 ```
 
 
@@ -182,10 +188,15 @@ head(SalesSub)
 
 SalesSub %>% 
     group_by(BMWMarket) %>% 
-    summarise(Cnt = n())
+    summarise(Cnt = n()) 
 
 SalesSub %>% 
     group_by(DealerState) %>% 
+    summarise(Cnt = n()) %>%
+    arrange (Cnt)
+
+SalesSub %>% 
+    group_by(Year) %>% 
     summarise(Cnt = n())
 
 SalesSub %>% 
@@ -205,9 +216,104 @@ SalesSub %>%
     summarise(Cnt = n())
 ```
 
+So it looks like we are missing eCodes for many vehicles (161k), but only missing models for 2k records. We may need to whittle our dataset down further, but for now, let's see if we can look at New vs Used sales across regions.
+
+```{r SalesNewUsed}
+SalesNewUsed <- 
+  subset (SalesSub, NewUsed=="N"|NewUsed=="U", select = c(BMWRegion, BMWMarket, VINID, Year, Make, Model, eCode, PurchDate, NewUsed, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode) )
+
+```
+
+In order to plot based on either just Year or Year-Month, we need to add some additional columns. 
+```{r AddYear&MoColumns}
+SalesNewUsed <- separate(SalesNewUsed, PurchDate, c("Yr","Mo","Day"), remove=FALSE)
+#head(SalesNewUsed)
+```
 
 
-# Left off here....
+```{r combineYrMo}
+SalesNewUsed <- unite(SalesNewUsed, YearMo, c(Yr,Mo), sep="-", remove=FALSE)
+#also: SalesNewUsed %>% unite(YearMo, Yr, Mo, sep="-", remove=FALSE)
+```
+```{r headsalesnu}
+head(SalesNewUsed)
+```
+
+
+
+
+```{r summarize1}
+# 
+# SalesNewUsed %>%
+#   select(YearMo, NewUsed, BMWRegion) %>%
+#   group_by(YearMo, NewUsed)  
+#   # not actually grouping.... still 3.4 million rows... adding summarize errors
+```
+
+
+Let's take a cursory look at BMW Vehicle Sales for all New & Used as well as New (N) vs Used (U) categories. 
+```{r plot1TotalbyPurchYear}
+ggplot(SalesNewUsed, aes(x=Yr)) +  
+  geom_histogram(stat="count") +
+  labs(title="BMW Vehicle Sales", x="Purchase Year", y="Vehicles Sold")
+  
+```
+```{r plot1NUbyPurchYear}
+
+ggplot(SalesNewUsed, aes(x=Yr, fill=NewUsed)) +  
+  geom_histogram(stat="count", position = "dodge") +
+  labs(title="BMW Vehicle Sales", x="Purchase Year", y="Vehicles Sold")
+
+# Can the y-axis label be altered to show the actual value like it does below?
+  
+```
+
+We can see that BMW sales climbed between 2011 and 2014, but have once again steadied out. In regards to New vs Used, in 2009 the sales of New and Used were almost equal and both were fairly low. From that point on; however, Used sales were fairly steady with New sales climbing rapidly. It's only in the last year or two do we see that Used sales are climbing again and New are on a decline. We saw this same occurance from 2007 to 2009. This could point to the ecomony valuing Used or perhaps that their CPO (Certified Pre-Owned) program has become more appealing than their New vehicle programs in recent years. On the plus side, total sales are still high.
+
+
+Let's now take a look at some Regional data. 
+```{r plot2TotalByRegion}
+
+
+ggplot(SalesNewUsed, aes(x=Yr, fill=BMWRegion)) +  
+  geom_histogram(stat="count", position = "dodge") +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
+  labs(title="BMW Vehicle Sales by Region", x="Purchase Year", y="Vehicles Sold")
+
+```
+
+It's clear here that the Central region only accounts for a small portion of the sales. It's only around 50% of any of the other three Regions. Let's stack these bars and see if that helps with the visualization of what proportion each region accounts for.
+```{r plot2TotalByRegionStacked}
+
+ggplot(SalesNewUsed, aes(x=Yr, fill=BMWRegion)) +  
+  geom_histogram(stat="count", position = "stack") +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
+  labs(title="BMW Vehicle Sales by Region", x="Purchase Year", y="Vehicles Sold")
+
+  # Can each color of each bar be labelled with percents?
+```
+
+
+Now let's look at the Regional sales for New vs Used.
+```{r plot2NUByRegion}
+
+ggplot(SalesNewUsed, aes(x=Yr, fill=BMWRegion)) +  
+  geom_histogram(stat="count", position = "dodge") +
+  facet_grid(. ~ NewUsed) +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
+  labs(title="BMW Vehicle Sales by Region", x="Purchase Year", y="Vehicles Sold")
+
+  
+```
+
+
+
+
+
+  
+
+
+
 
 
 
