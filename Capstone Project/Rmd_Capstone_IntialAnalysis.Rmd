@@ -1,12 +1,17 @@
 ---
-title: "Capstone: Initial Aanalysis on BMW Sales trends in the US"
+title: 'Capstone: Initial Analysis on BMW Sales trends in the US'
 author: "Stephanie Vaul"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
 ---
 
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(fig.show = 'asis')  #show results 
 ```
 
 
@@ -16,23 +21,23 @@ I'm going to analyze the BMW automotive sales trends in the USA over the last 10
 
 My client is BMW North America, a company that my employer has partnered with over the last 10 years to provide customer retention marketing. Determining which model series do well in each geographic area, as well as which series result in repeat buyers will help BMW better focus their marketing efforts for various ad campaigns by leveraging existing trends, as well as being able to extrapolate those trends in other areas of similar makeup.  
 
-I plan to use dealership sales data that my company has been collecting for the past 10+ years in order to provide sales-to-service retention marketing, e.g. initial service reminders. This data includes customer and vehicle information, along with the purchase date and type (new vs used). Some of the data includes demographic information, like birthdate and gender. I will review the data to see if there is sufficient data in order to provide trend reports based on age &/or gender.  
+I plan to use dealership sales data that my company has been collecting for the past 10+ years in order to provide sales-to-service retention marketing, e.g. initial service reminders. This data includes customer and vehicle information, along with the purchase date and type (new vs used). Some of the data includes demographic information, like birth date and gender. I will review the data to see if there is sufficient data in order to provide trend reports based on age &/or gender.  
 
 Proprietary sales data from most BMW centers in the U.S. going back 10yrs:
 
-•Region (BMW Region assigned to the selling dealership by BMW, of which there are four)
-•Market (BMW Market assigned to the selling dealership by BMW)
-•PurchDate
-•VehYear
-•VehModel
-•VehECode (engine code assigned by BMW to categorize years & models)
-•TradeVIN
-•TradeVehYear
-•TradeVehModel
-•TradeVehECode
-•NewUsed (New, Used, Other sale)
-•PurchType (Lease, Cash, Finance)
-•Gender (limited data provided here)
+* Region (BMW Region assigned to the selling dealership by BMW, of which there are four)
+* Market (BMW Market assigned to the selling dealership by BMW)
+* PurchDate
+* VehYear
+* VehModel
+* VehECode (engine code assigned by BMW to categorize years & models)
+* TradeVIN
+* TradeVehYear
+* TradeVehModel
+* TradeVehECode
+* NewUsed (New, Used, Other sale)
+* PurchType (Lease, Cash, Finance)
+* Gender (limited data provided here)
 
 BMW also has their own designations for dealership Region and Market. I will apply this similar sorting parameters to the customer’s address in order to determine which Region a customer belongs too. 
 Because we also collect service data, I will be able to also look at how long a customer owned a vehicle by reviewing both Sales and Service data. I will first look to see if we have subsequent sales data on the vehicle – whether that be from another customer purchasing the VIN or the VIN being listed by the same customer as being traded in. If there is no additional sales record, then I can turn to the service history to see when they last serviced it. While this is not entirely accurate should the customer service at an independent station, it will provide better information than not having it at all.  
@@ -53,6 +58,8 @@ getwd()
 <!-- ## Review Environment and clear it -->
 ```{r enviroment}
   rm(list=ls())
+```
+```{r enviromentcheck, echo=FALSE}
 #  ls()
 ```
 
@@ -63,16 +70,15 @@ library(stringr)
 library(tidyr)
 library(dplyr)
 library(ggplot2)
+library(scales)
 ```
 
-Now let's read in our data set, which contains both BMW Dealership data, as well as customer and vehicle sales data over the past 10-years. 
+Now let's read in our data set, which contains Dealership, customer, and vehicle sales data for BMW makes. Once read in, we should take a look at the Summary of this table. Since we don't want to reveal any sensitive data, we won't look at the head of the table until we've been able to reduce the data set to just the fields we need.
 <!-- read.table ("BMWSales.txt", header = TRUE, sep = "|", quote = "\"", nrows = 500) -->
 
 ```{r readdata}
 Sales <- read.table ("BMWSales.txt", header = TRUE, sep = "|", quote = "\"", stringsAsFactors = FALSE)     
 ```
-
-
 ```{r summarySales}
 summary(Sales)
 ``` 
@@ -80,42 +86,40 @@ summary(Sales)
 # head(Sales)
 ```
 
-Let's subset this data to eliminate any sales at non-BMW dealerships and remove unnecessary fields. 
+Now that we can see some information on all the fields, let's subset the data to eliminate any sales at non-BMW dealerships and remove the unnecessary fields. For example, we don't need to have any of the customer detail information, such as their name or street address. Since there would be no "New"" BMW sales records at non-BMW dealerships, we can eliminate those records. BMW is our client, so we want to focus on the sales - New or Used - at their dealerships. Once we've subset our data, we can take a look at the first few rows. 
 
 ```{r subset}
 SalesSub <- subset(Sales, BMWDlr=="True", select = c(BMWRegion, BMWMarket, DealerID, DealerState, VINID, VIN, Year, Make, Model, eCode, PurchDate, NewUsed, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode, CustID, CustState, Gender, BirthDate) )
 ```
-
+```{r summarysub, echo=FALSE}
+#summary(SalesSub)     
+```
 ```{r headsub}
 head(SalesSub)     
 ```
-```{r summarysub}
-summary(SalesSub)     
-```
 
 
-We need to set PurchDate, along FinanceTerm and Birthdate, to a date field before we can use it to reduce the subset to a 10 year window between 1/1/2007 and 12/31/2016. Since SQL data comes with milliseconds, we need to use the following POSIXct format: 
+At this point, it looks like we'll have an issue with our date fields since they're currently formatted as characters. We need to set PurchDate, along FinanceTerm and BirthDate, to a date format before we can reduce the data to a 10 year window, in this case, between 1/1/2007 and 12/31/2016. Since the original data file was exported from a SQL database, the date fields were exported out to the millisecond ("2016-12-31 00:00:00.000") vs just out to the second ("2016-12-31 00:00:00"). Because of this, we need to use the following POSIXct format in order to convert them to a datetime. Once we've run the conversion, let's verify the format is correct.
 
 ```{r date}
 SalesSub$PurchDate <- as.POSIXct(SalesSub$PurchDate, format = "%Y-%m-%d %H:%M:%OS")
 SalesSub$FinanceTerm <- as.POSIXct(SalesSub$FinanceTerm, format = "%Y-%m-%d %H:%M:%OS")
 SalesSub$BirthDate <- as.POSIXct(SalesSub$BirthDate, format = "%Y-%m-%d %H:%M:%OS")
 ```
+```{r summarysubdate}
+SalesSub %>% 
+   summarise(MinPurch = min(PurchDate),MaxPurch = max(PurchDate))     
+```
 <!-- SalesSub$NewPurchDate <- NULL -->
 
-Now we can go back up and recheck our Head &/or Summary to see that the fields are correctly set as datetime. Since they are, let’s go ahead and drop the original Sales table:
+Since our dates look good, let’s go ahead and drop the original Sales table since it's no longer needed. And we can now use the "PurchDate"" field to further subset our data down to the 10-year range we desire. In this case, let’s just replace the "SalesSub"" table instead of creating a new version. We can then take another look at our minimum and maximum PurchDate range to confirm that it only includes the proper range. 
 ```{r removeSales}
 rm(Sales)
 ```
-
-
-From here we can use the PurchDate to further subset our data. In this case, let’s just replace the SalesSub table.
 ```{r subset2}
 SalesSub <- subset(SalesSub, as.POSIXct(PurchDate)>=as.POSIXct('2007-01-01 00:00:00.000') & as.POSIXct(PurchDate)<as.POSIXct('2017-01-01 00:00:00.000'), select = c(BMWRegion, BMWMarket, DealerID, DealerState, VINID, VIN, Year, Make, Model, eCode, PurchDate, NewUsed, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode, CustID, CustState, Gender, BirthDate) )
 ```
-
-If we summarize the PurchDate, we can see the new PurchDate range.
-```{r summarysub2}
+```{r summarysubdate2}
 SalesSub %>% 
    summarise(MinPurch = min(PurchDate),MaxPurch = max(PurchDate))     
 ```
@@ -131,9 +135,9 @@ SalesSub2 <- SalesSub
 ```
 
 
-Let’s take a closer look at some of the other fields to see if anything needs to be corrected before we move on to the data analysis.
+Now, let’s take a closer look at some of the other fields to see if anything needs to be corrected before we move on to the data analysis. Let's start with the Region since this is a field that we'll definitely want to utilize in our analysis.
 
-BMW Region
+#####BMW Region
 <!-- # distinct(select(SalesSub,BMWRegion)) -->
 ```{r RegionReview}
 SalesSub %>% 
@@ -141,10 +145,8 @@ SalesSub %>%
     summarise(cnt = n())
 ```
 
-We see that there were different cases, all CAPS mostly and some mixed, used for the Regions. Let’s set those all to CAPS. We can go back up and recheck our summary when done.
+We see that there are different cases. All four regions have values noted with all CAPS, but two also have values using mixed case. Since R reads these as six different regions, we'll need to make them all consistent in order to get back to the four actual regions. To do this, let’s set those all to CAPS and verify our update when done.
 
-
-We also saw from the Summary that there were different cases, all CAPS mostly and some mixed, used for the Regions. Let's set those all to CAPS. 
 ```{r RegionToUpper}
 SalesSub$BMWRegion <- toupper(SalesSub$BMWRegion)  
 
@@ -154,7 +156,7 @@ SalesSub %>%
 ```
 
 
-Gender
+#####Gender
 ```{r GenderReview}
 SalesSub %>% 
     group_by(Gender) %>% 
@@ -162,13 +164,13 @@ SalesSub %>%
     arrange(desc(Cnt))
 ```
 
-While we may not be able to effectively utilize the Gender variable due to most records missing this field, let’s go ahead and normalize it as well. We can set all the values of just M to MALE and just F to FEMALE.
+We can see that the Gender field is filled with a lot more values than just Male/M/Female/F. While we may not be able to effectively utilize the Gender variable due to most records missing this field, let’s go ahead and normalize it as well. We can set all the values of just "M"" to "MALE"" and just "F"" to "FEMALE". 
 ```{r GenderNormalizing}
 SalesSub$Gender <- gsub('^M$', 'MALE', SalesSub$Gender)
 SalesSub$Gender <- gsub('^F$', 'FEMALE', SalesSub$Gender)
 ```
 
-Once this is complete, we need to remove all the invalid data.
+Once this is complete, we need to remove all the invalid data, anything other than just "MALE" or "FEMALE", so that it doesn't skew any possible analysis. Let's verify this once it's done.
 ```{r GenderRemoveInvalids}
 SalesSub$Gender <- ifelse ( grepl("FEMALE|MALE", SalesSub$Gender), SalesSub$Gender, '' )
 
@@ -177,136 +179,181 @@ SalesSub %>%
     summarise(Cnt = n())
 ```
 
-If we decide to use CustState, we’ll want to set all to Upper and then remove or fix any that are not part of the 51 US states or military codes, such as AE, AP, etc. For now, we can ignore this field.
+Now that BMWRegion and Gender look good, let’s take a summarized look at many of the other variables to see if we need to clean up any additional fields at this time. 
 
-Similarly for model Year, if we decide to utilize this field, we’ll need to change any 2-digit years to 4-digit years and possibly exclude those that are missing or invalid.
-
-Let’s take another look at our data to see if we need to clean up any additional fields at this time.
-
-```{r ReviewAgain}
+```{r ReviewAgain, echo=FALSE, results="hide"}
 head(SalesSub)
+```
 
+Let's review the outputs one at a time.
+
+#####Market:
+```{r ReviewMarket, echo=FALSE}
 SalesSub %>% 
     group_by(BMWMarket) %>% 
     summarise(Cnt = n()) 
+```
++ Market values are clean and all values are present. 
 
+
+#####Dealer State:
+```{r ReviewDealerState, echo=FALSE}
 SalesSub %>% 
     group_by(DealerState) %>% 
     summarise(Cnt = n()) %>%
-    arrange (Cnt)
+    arrange (DealerState)
+```
++ DealerState also looks clean with all values present. We see that 47 states and 1 territory (Puerto Rico, PR) are represented. Only the District of Columbia (DC), Montana (MT), North Dakota (ND), & Wyoming (WY) do not have a BMW dealership.
 
+
+#####Customer State:
+```{r ReviewCustState, echo=FALSE}
+SalesSub %>% 
+    group_by(CustState) %>% 
+    summarise(Cnt = n()) %>%
+    arrange (CustState)
+```
++ CustState, on the other hand, includes 117 unique values - way more than just the 50 US states, 1 district, 1 territory, or military codes (AA, AE, AP). While we see some lower & mixed case values and some Canadian provinces, such as BC (British Columbia), we also see many invalid values. We most likely won't utilize this field in our analysis, so for now we'll leave it be. If we were to use it, we’d want to set it to Upper case and then remove or fix any that are not valid. 
+
+
+#####Model Year:
+```{r ReviewModelYear, echo=FALSE}
 SalesSub %>% 
     group_by(Year) %>% 
-    summarise(Cnt = n())
+    summarise(Cnt = n()) %>% 
+    arrange (Cnt)
+```
++ Similarly for the vehicle's Year, if we decide to utilize this field, we’ll need to make some corrections first. We have several years that are only 1-2 digits. These would need to be changed to 4-digit years - for example, 6 is likely 2006 and 97 would be changed to 1997. While the year 0 could be 2000, it's also just as likely to be invalid so for these, we would need to just exclude them, along with any remaining missing or invalid values. 
 
+
+#####Model:
+```{r ReviewModel, echo=FALSE}
 SalesSub %>% 
     group_by(Model) %>% 
     summarise(Cnt = n())
+```
++ Looking at the Model summary, we can see that we are missing value for nearly 2200 records and that there are 386 other unique values. Using this alone would make analysis difficult. If we want to utilize Model, we'll first need to normalize this into a new field where we mark all records where the model starts with a '1' as a '1-series', all that start with a '3' as a 3-series, etc. We'd have to be careful in doing this as we can see that not everything that starts with a '2' is a 2-series. For example, there are models listed as '2DR ....' or '4D ....'. In doing so, we still may find we are unable to categorize every model and would then need to exclude all of the missing or invalid records from analysis. 
 
+
+#####Vehicle eCode:
+```{r RevieweCode, echo=FALSE}
 SalesSub %>% 
     group_by(eCode) %>% 
-    summarise(Cnt = n(), MinYr = min(Year), MaxYr = max(Year))
+    summarise(Cnt = n(), MinModelYr = min(Year), MaxModelYr = max(Year))
+```
++ BMW uses what they call an Engine Code (eCode for short) that actually categorizes models and year into groups of similar body styles. Here we would see multiple eCodes for the 3-series vehicles. But instead of all 2007-2017 3-series, an eCode may include only certain 3-series and only for a smaller model year window. Since BMW does marketing based on eCodes, we may want to start here instead of normalizing our models. The downside here is that we don't directly see what models/years are included in each eCode. However, this would be relevant to our customer. The biggest issue we have with this field though is that we are missing the eCode value for 161k of our 3.4 million records. This is about 5.5% so we still have data on the majority of records and could proceed.
 
+
+#####Pay Type:
+```{r ReviewPayType, echo=FALSE}
 SalesSub %>% 
     group_by(PayType) %>% 
     summarise(Cnt = n())
+```
++ PayType looks pretty good as is. We're missing values for only 5.7k records and the remaining are divided into the three main pay types: C=Cash, F=Finance, & L=Lease. Right away we can see that the majority of buyers, 43%, finance their purchase, but leasing, 30%, and paying in cash, 27%, aren't too far behind.
 
+
+#####NewUsed Flag:
+```{r ReviewNewUsed, echo=FALSE}
 SalesSub %>% 
     group_by(NewUsed) %>% 
     summarise(Cnt = n())
 ```
++ NewUsed is used to designate if a vehicle purchased is either a New vehicle or a Used vehicle. But we are also seeing many other fields, such as O for Other, D for Demo, & F for Fleet. Some of the designations appear to be invalid or missing and others have unknown meaning - such as M & W. We could probably consider all non-New types as Used; however, since some of these may come with a New warranty and maintenance plan - being sold like a New vehicle type even though it's been used as a dealer demo, we'll exclude any sale not specifically designated as either New or Used.
 
-So it looks like we are missing eCodes for many vehicles (161k), but only missing models for 2k records. We may need to whittle our dataset down further, but for now, let's see if we can look at New vs Used sales across regions.
 
+## New & Used Sales Data
+Let's now look at New vs Used sales for BMW vehicles across the Nation and within the four BMW regions. With this information, we can see if there are any national or regional trends that warrant further investigation. The first thing we'll do is subset our data to just include vehicle sales flagged as either New or Used as we discussed above. In this case, some of these Used vehicles may actually be Certified Pre-Owned (CPO) vehicles that have undergone additional inspections and include a warranty with purchase. Unfortunately, this information isn't available to us so we are unable to differentiate between these higher valued CPO vehicles and traditional Used vehicles.
+
+Let's go ahead and subset the New and Used only vehicles into their own table. We can also use this opportunity to whittle down our field list even further.
 ```{r SalesNewUsed}
 SalesNewUsed <- 
   subset (SalesSub, NewUsed=="N"|NewUsed=="U", select = c(BMWRegion, BMWMarket, VINID, Year, Make, Model, eCode, PurchDate, NewUsed, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode) )
 
 ```
 
-In order to plot based on either just Year or Year-Month, we need to add some additional columns. 
+Now, all of our Purchase Dates are Month/Day/Year and over the course of 10-years this translates into a lot of data points. Because this would result in plots that are very difficult, if not impossible, to read and we don't really care about sales from one specific day vs another, we should pull apart our dates into separate purchase Month, Day, & Year columns. This will allow us to properly analyze the data.
 ```{r AddYear&MoColumns}
-SalesNewUsed <- separate(SalesNewUsed, PurchDate, c("Yr","Mo","Day"), remove=FALSE)
-#head(SalesNewUsed)
+SalesNewUsed <- separate(SalesNewUsed, PurchDate, c("PurYear","PurMo","PurDay"), remove=FALSE)
 ```
 
-
+While this is great for looking at either annual or seasonal trends (if we group by Months only), if we want to group by purchase Year and Month, we'll need to go one step further and combine those two separate columns into one new combined column. 
 ```{r combineYrMo}
-SalesNewUsed <- unite(SalesNewUsed, YearMo, c(Yr,Mo), sep="-", remove=FALSE)
-#also: SalesNewUsed %>% unite(YearMo, Yr, Mo, sep="-", remove=FALSE)
+SalesNewUsed <- unite(SalesNewUsed, PurYearMo, c(PurYear,PurMo), sep="-", remove=FALSE)
 ```
+<!-- above could also be: SalesNewUsed %>% unite(PurYearMo, PurYear, PurMo, sep="-", remove=FALSE) -->
+
+Here we can see the final result of our split and combining efforts.
 ```{r headsalesnu}
 head(SalesNewUsed)
 ```
 
+<!-- # ```{r summarize1} -->
+<!-- #  -->
+<!-- # SalesNewUsed %>% -->
+<!-- #   select(PurYearMo, NewUsed, BMWRegion) %>% -->
+<!-- #   group_by(PurYearMo, NewUsed, BMWRegion) -->
+<!-- #   summarize(count(BMWRegion)) # not actually grouping.... still 3.4 million rows... adding summarize errors -->
+<!-- ``` -->
 
 
-
-```{r summarize1}
-# 
-# SalesNewUsed %>%
-#   select(YearMo, NewUsed, BMWRegion) %>%
-#   group_by(YearMo, NewUsed)  
-#   # not actually grouping.... still 3.4 million rows... adding summarize errors
-```
-
-
-Let's take a cursory look at BMW Vehicle Sales for all New & Used as well as New (N) vs Used (U) categories. 
+Now that we have that all taken care of, let's take a cursory look at the Total BMW Vehicle Sales, as well as the breakouts for the New (N) vs Used (U) categories. 
 ```{r plot1TotalbyPurchYear}
-ggplot(SalesNewUsed, aes(x=Yr)) +  
-  geom_histogram(stat="count") +
-  labs(title="BMW Vehicle Sales", x="Purchase Year", y="Vehicles Sold")
-  
+
+options(scipen=3) #to show the y values as full numbers vs scientific (0e+00, 1e+05, etc)
+ggplot(SalesNewUsed, aes(x=PurYear)) +  
+  geom_histogram(stat="count", fill="blue") +
+  scale_y_continuous(limits = c(0,500000)) +
+  labs(title="BMW Vehicle Sales - Total", x="Purchase Year", y="Vehicles Sold")
+
 ```
 ```{r plot1NUbyPurchYear}
 
-ggplot(SalesNewUsed, aes(x=Yr, fill=NewUsed)) +  
+ggplot(SalesNewUsed, aes(x=PurYear, fill=NewUsed)) +  
   geom_histogram(stat="count", position = "dodge") +
-  labs(title="BMW Vehicle Sales", x="Purchase Year", y="Vehicles Sold")
+  labs(title="BMW Vehicle Sales - New vs Used", x="Purchase Year", y="Vehicles Sold")
 
-# Can the y-axis label be altered to show the actual value like it does below?
-  
 ```
 
-We can see that BMW sales climbed between 2011 and 2014, but have once again steadied out. In regards to New vs Used, in 2009 the sales of New and Used were almost equal and both were fairly low. From that point on; however, Used sales were fairly steady with New sales climbing rapidly. It's only in the last year or two do we see that Used sales are climbing again and New are on a decline. We saw this same occurance from 2007 to 2009. This could point to the ecomony valuing Used or perhaps that their CPO (Certified Pre-Owned) program has become more appealing than their New vehicle programs in recent years. On the plus side, total sales are still high.
+We can see that BMW sales climbed between 2011 and 2014, but have once again steadied out. In regards to New vs Used, in 2009 the sales of New and Used were almost equal with New sales at their lowest during this 10-year period. From that point on; however, Used sales were fairly steady with New sales climbing rapidly. It's only in the last year or two do we see that Used sales are climbing again and New are on a decline. We saw this same occurrence from 2007 to 2009. This could point to the economy valuing Used or perhaps that their CPO (Certified Pre-Owned) program has become more appealing in recent years and has started to impact their New vehicle sales. On the plus side, total sales are still at their highest.
 
 
-Let's now take a look at some Regional data. 
+Let's now take a look at some Regional data. We start by looking at total sales by region.
 ```{r plot2TotalByRegion}
 
-
-ggplot(SalesNewUsed, aes(x=Yr, fill=BMWRegion)) +  
+ggplot(SalesNewUsed, aes(x=PurYear, fill=BMWRegion)) +  
   geom_histogram(stat="count", position = "dodge") +
   theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
   labs(title="BMW Vehicle Sales by Region", x="Purchase Year", y="Vehicles Sold")
 
 ```
 
-It's clear here that the Central region only accounts for a small portion of the sales. It's only around 50% of any of the other three Regions. Let's stack these bars and see if that helps with the visualization of what proportion each region accounts for.
+It's clear here that the Central region only accounts for a small portion of the sales. It's only around 50% of any of the other three Regions. Let's stack these bars to get an idea of each regions percentage of the annual total. Perhaps this will help us get a better visualization of how they compare.
 ```{r plot2TotalByRegionStacked}
-
-ggplot(SalesNewUsed, aes(x=Yr, fill=BMWRegion)) +  
-  geom_histogram(stat="count", position = "stack") +
+ggplot(SalesNewUsed, aes(x=PurYear, fill=BMWRegion)) +  
+  geom_histogram(stat="count", position="fill") + # vs "stack"
+  scale_y_continuous(breaks=seq(0, 1, .1)) + #c(0,.1, .2, .3, .4, .5, .6, .7, .8, .9, 1.00)) +
   theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
   labs(title="BMW Vehicle Sales by Region", x="Purchase Year", y="Vehicles Sold")
 
-  # Can each color of each bar be labelled with percents?
 ```
+  <!-- Can each color of each bar be labelled, preferrably with percents? -->
+  <!-- see https://rpubs.com/escott8908/RGC_Ch3_Gar_Graphs for value labels for "stack" -->
 
+So looking at this graph, we can see that each region is fairly consistent with it's contribution to sales over the years. The Western & Southern regions appear to pull in between 25% & 30%, with the Eastern region typically pulling ahead slightly with 25-35% of sales. The Central region by far is the notable region with sales always under 15%. It's clear from this plot that it's this region that could benefit from more specific marketing efforts.
 
 Now let's look at the Regional sales for New vs Used.
 ```{r plot2NUByRegion}
 
-ggplot(SalesNewUsed, aes(x=Yr, fill=BMWRegion)) +  
+ggplot(SalesNewUsed, aes(x=PurYear, fill=BMWRegion)) +  
   geom_histogram(stat="count", position = "dodge") +
   facet_grid(. ~ NewUsed) +
   theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
   labs(title="BMW Vehicle Sales by Region", x="Purchase Year", y="Vehicles Sold")
 
-  
 ```
 
-
+Here we can observe that even within each region, we're seeing a similar curve that we saw with each of the New and Used sales graphs. We see that the Eastern Region generally takes the lead in both categories. However, we can also see that the Eastern Region's lead over the Southern & Western regions in total sales between 2010 and 2014 can be accounted for in nearly all New purchases. Their edge over the Southern & Western regions in Used sales is very minor. The Eastern region saw a decline in their New sales between 2014 and 2015 though, while the Southern & Western regions continued to climb. 2016 continued to result in a decline in New sales for each region, but this was offset by the increase in Used sales for each. BMW should refocus their efforts on selling New vehicles to try to turn around their declining trend, while trying to leverage their recent increase in Used sales.
 
 
 
@@ -317,8 +364,8 @@ ggplot(SalesNewUsed, aes(x=Yr, fill=BMWRegion)) +
 
 
 
-#Pitfalls of the data set
+##Pitfalls of the data set
 
 * Not all BMW stores have provided access to their Sales data so the analysis is limited by dealership participation.  
-* Due to possible changes in the system that a dealer uses to manage their database, the customerID's can change over time. This means that a single customer may actually have more than one CustomerID and be seen as 2 or more unique customers. More elaborate customer matching, based on name & address, could be done to try to remedy some of these issue, but there is still room for error based on how a name or address is typed into the system. For example, "Jim" vs "James" or "1234 Main Street" vs "1234 Main St.". We will also not see if the same customer purchases as more than one BMW dealership.  
+* Due to possible changes in the system that a dealer uses to manage their database, the CustomerID's can change over time. This means that a single customer may actually have more than one CustomerID and be seen as 2 or more unique customers. More elaborate customer matching, based on name & address, could be done to try to remedy some of these issue, but there is still room for error based on how a name or address is typed into the system. For example, "Jim" vs "James" or "1234 Main Street" vs "1234 Main St.". We will also not see if the same customer purchases as more than one BMW dealership.  
 * And, finally, we are not going to see all sales made to all non-BMW dealerships as well as private sales. These can skew the model by not reflecting the proper length of ownership.
