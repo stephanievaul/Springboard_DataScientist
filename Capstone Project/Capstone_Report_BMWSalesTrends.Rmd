@@ -1,0 +1,808 @@
+---
+title: 'Capstone: Analysis on 10-year BMW Sales trends in the U.S.'
+author: "Stephanie Vaul"
+output:
+  html_document: default
+  keep_md: yes
+  word_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(fig.show = 'asis')  #show results 
+```
+
+
+## Introduction
+
+I'm going to analyze the BMW automotive sales trends in the USA over the last 10 years in order to determine which areas of the country and which model types display the highest sales volume. I will also look at how these trends vary between New and Used vehicles. In addition, I will try to identify a predictor for New sales.   
+
+My client is BMW North America, a company that my employer has partnered with over the last 10 years to provide customer retention marketing. Determining which model series do well in each region, will help BMW better focus their marketing efforts for various ad campaigns by leveraging existing trends, as well as being able to extrapolate those trends in other areas of similar makeup.  
+
+I plan to use dealership sales data that my company has been collecting for the past 10+ years, which we use to provide sales-to-service retention marketing, e.g. purchase thank you's, initial service reminders, etc. This data includes customer and vehicle information, along with the purchase date and type (new vs used). Some of the data includes demographic information, like birth date and gender. I will review the data to see if there is sufficient data in order to provide trend reports based on age &/or gender.  
+
+The proprietary sales data from most BMW centers in the U.S. going back 10 years includes the following:
+
+* Region (BMW Region assigned to the selling dealership by BMW, of which there are four)
+* Market (BMW Market assigned to the selling dealership by BMW)
+* PurchDate
+* VehYear
+* VehModel
+* VehECode (engine code assigned by BMW to categorize years & models)
+* TradeVIN
+* TradeVehYear
+* TradeVehModel
+* TradeVehECode
+* NewUsed (New, Used, Other sale)
+* PurchType (Lease, Cash, Finance)
+* Gender (limited data provided here)
+
+I will first review and clean the data so that we can properly work with the values. Then I'll segment the purchases by model series and type (new or used) in order to see both total and regional sales volumes. We will also take a look at purchase price information by model type and compare that with the sales volumes for each over the years. From there, I will include economic data gathered from Quandl that I can use to try to build a predictive sales model. This data will include information such as national unemployment, disposable income, loan rates, and overall automotive sales. 
+
+
+
+## The Data Set
+
+To get started, let's set our working directory, clear our Environment, & load our libraries.
+
+<!-- # Working Directory -->
+```{r directory}
+setwd("~/_MyFiles/Data Science Workshop/Springboard_DataScientist/Capstone Project")
+getwd()
+```
+
+<!-- ## Review Environment and clear it -->
+```{r enviroment}
+  rm(list=ls())
+```
+```{r enviromentcheck, echo=FALSE}
+#  ls()
+```
+
+<!-- ## Load Libraries -->
+```{r libraries, results = 'hide', message=FALSE}
+library(devtools)
+library(stringr)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(scales)
+#install.packages("Hmisc")
+library(Hmisc)
+```
+
+Now let's read in our data set, which contains dealership, customer, and vehicle sales data for the "BMW" make. Once read in, we should take a look at the summary of this table. Since we don't want to reveal any sensitive data, we won't look at the head of the table until we've been able to reduce the data set to just the fields we need.
+<!-- read.table ("BMWSales.txt", header = TRUE, sep = "|", quote = "\"", nrows = 500) -->
+
+```{r readdata}
+Sales <- read.table ("BMWSales.txt", header = TRUE, sep = "|", quote = "\"", stringsAsFactors = FALSE)     
+```
+```{r summarySales}
+summary(Sales)
+``` 
+```{r headSales, echo = FALSE}
+# head(Sales)
+```
+
+Now that we can see some information on all the fields, let's subset the data to eliminate any sales at non-BMW dealerships and remove the unnecessary fields. For example, we don't need to have any of the customer detail information, such as their name or street address. Since there would be no "New"" BMW sales records at non-BMW dealerships, we can eliminate those records. BMW is our client, so we want to focus on the sales - New or Used - at their dealerships. Once we've subset our data, we can take a look at the first few rows. 
+
+```{r subset}
+SalesSub <- subset(Sales, BMWDlr=="True", select = c(BMWRegion, BMWMarket, DealerID, DealerState, VINID, VIN, Year, Make, Model, eCode, PurchDate, NewUsed, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode, CustID, CustState, Gender, BirthDate) )
+```
+```{r summarysub, echo=FALSE}
+#summary(SalesSub)     
+```
+```{r headsub}
+head(SalesSub)     
+```
+
+
+At this point, it looks like we'll have an issue with our date fields since they're currently formatted as characters. We need to set PurchDate, along FinanceTerm and BirthDate, to a date format before we can reduce the data to a 10 year window, in this case, between 1/1/2007 and 12/31/2016. Since the original data file was exported from a SQL database, the date fields were exported out to the millisecond ("2016-12-31 00:00:00.000") vs just out to the second ("2016-12-31 00:00:00"). Because of this, we need to use the following POSIXct format in order to convert them to a datetime. Once we've run the conversion, let's verify the format is correct.
+
+```{r date}
+SalesSub$PurchDate <- as.POSIXct(SalesSub$PurchDate, format = "%Y-%m-%d %H:%M:%OS")
+SalesSub$FinanceTerm <- as.POSIXct(SalesSub$FinanceTerm, format = "%Y-%m-%d %H:%M:%OS")
+SalesSub$BirthDate <- as.POSIXct(SalesSub$BirthDate, format = "%Y-%m-%d %H:%M:%OS")
+```
+```{r summarysubdate}
+SalesSub %>% 
+   summarise(MinPurch = min(PurchDate),MaxPurch = max(PurchDate))     
+```
+<!-- SalesSub$NewPurchDate <- NULL -->
+
+Since our dates look good, let's go ahead and drop the original Sales table since it's no longer needed. And we can now use the "PurchDate"" field to further subset our data down to the 10-year range we desire. In this case, let's just replace the "SalesSub"" table instead of creating a new version. We can then take another look at our minimum and maximum PurchDate range to confirm that it only includes the proper range. 
+```{r removeSales}
+rm(Sales)
+```
+```{r subset2}
+SalesSub <- subset(SalesSub, as.POSIXct(PurchDate)>=as.POSIXct('2007-01-01 00:00:00.000') & as.POSIXct(PurchDate)<as.POSIXct('2017-01-01 00:00:00.000'), select = c(BMWRegion, BMWMarket, DealerID, DealerState, VINID, VIN, Year, Make, Model, eCode, PurchDate, NewUsed, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode, CustID, CustState, Gender, BirthDate) )
+```
+```{r summarysubdate2}
+SalesSub %>% 
+   summarise(MinPurch = min(PurchDate),MaxPurch = max(PurchDate))     
+```
+
+Before moving on, let's convert this data.frame into a dplyr table.
+```{r converttotbl}
+tbl_df(SalesSub)
+```
+
+<!-- Create Backup SalesSub <- NULL -->
+```{r Backup, echo = FALSE}
+SalesSub2 <- SalesSub
+```
+
+
+Now, let's take a closer look at some of the other fields to see if anything needs to be corrected before we move on to the data analysis. Let's start with the Region since this is a field that we'll definitely want to utilize in our analysis.
+
+#####BMW Region:
+<!-- # distinct(select(SalesSub,BMWRegion)) -->
+```{r RegionReview}
+SalesSub %>% 
+    group_by(BMWRegion) %>% 
+    summarise(cnt = n())
+```
+
+We see that there are different cases. All four regions have values noted with all CAPS, but two also have values using mixed case. Since R reads these as six different regions, we'll need to make them all consistent in order to get back to the four actual regions. To do this, let's set those all to CAPS and verify our update when done.
+
+```{r RegionToUpper}
+SalesSub$BMWRegion <- toupper(SalesSub$BMWRegion)  
+
+SalesSub %>% 
+    group_by(BMWRegion) %>% 
+    summarise(cnt = n())
+```
+
+Let's move onto Gender next to see if we have enough data here to utilize for our analysis.
+
+#####Gender:
+```{r GenderReview}
+SalesSub %>% 
+    group_by(Gender) %>% 
+    summarise(Cnt = n()) %>%  
+    arrange(desc(Cnt))
+```
+
+We can see that the Gender field is filled with a lot more values than just Male/M/Female/F. While we may not be able to effectively utilize the Gender variable due to most records missing this field, let's go ahead and normalize it as well. We can set all the values of just "M"" to "MALE"" and just "F"" to "FEMALE". 
+```{r GenderNormalizing}
+SalesSub$Gender <- gsub('^M$', 'MALE', SalesSub$Gender)
+SalesSub$Gender <- gsub('^F$', 'FEMALE', SalesSub$Gender)
+```
+
+Once this is complete, we need to remove all the invalid data, anything other than just "MALE" or "FEMALE", so that it doesn't skew any possible analysis. Let's verify this once it's done.
+```{r GenderRemoveInvalids}
+SalesSub$Gender <- ifelse ( grepl("FEMALE|MALE", SalesSub$Gender), SalesSub$Gender, '' )
+
+SalesSub %>% 
+    group_by(Gender) %>% 
+    summarise(Cnt = n())
+```
+
+Now that BMWRegion and Gender look good, let's take a summarized look at many of the other variables to see if we need to clean up any additional fields at this time. 
+
+```{r ReviewAgain, echo=FALSE, results="hide"}
+head(SalesSub)
+```
+
+Let's review the outputs one at a time.
+
+#####Market:
+```{r ReviewMarket, echo=FALSE}
+SalesSub %>% 
+    group_by(BMWMarket) %>% 
+    summarise(Cnt = n()) 
+```
++ Market values are clean and all values are present. 
+
+
+#####Dealer State:
+```{r ReviewDealerState, echo=FALSE}
+SalesSub %>% 
+    group_by(DealerState) %>% 
+    summarise(Cnt = n()) %>%
+    arrange (DealerState)
+```
++ DealerState also looks clean with all values present. We see that 47 states and 1 territory (Puerto Rico, PR) are represented. Only the District of Columbia (DC), Montana (MT), North Dakota (ND), & Wyoming (WY) do not have a BMW dealership.
+
+
+#####Customer State:
+```{r ReviewCustState, echo=FALSE}
+SalesSub %>% 
+    group_by(CustState) %>% 
+    summarise(Cnt = n()) %>%
+    arrange (CustState)
+```
++ CustState, on the other hand, includes 117 unique values - way more than just the 50 US states, 1 district, 1 territory, or military codes (AA, AE, AP). While we see some lower & mixed case values and some Canadian provinces, such as BC (British Columbia), we also see many invalid values. We most likely won't utilize this field in our analysis, so for now we'll leave it be. If we were to use it, we'd want to set it to Upper case and then remove or fix any that are not valid. 
+
+
+#####Model Year:
+```{r ReviewModelYear, echo=FALSE}
+SalesSub %>% 
+    group_by(Year) %>% 
+    summarise(Cnt = n()) %>% 
+    arrange (Cnt)
+```
++ Similarly for the vehicle's Year, if we decide to utilize this field, we'll need to make some corrections first. We have several years that are only 1-2 digits. These would need to be changed to 4-digit years - for example, 6 is likely 2006 and 97 would be changed to 1997. While the year 0 could be 2000, it's also just as likely to be invalid so for these, we would need to just exclude them, along with any remaining missing or invalid values. 
+
+
+#####Model:
+```{r ReviewModel, echo=FALSE}
+SalesSub %>% 
+    group_by(Model) %>% 
+    summarise(Cnt = n())
+```
++ Looking at the Model summary, we can see that we are missing value for nearly 2200 records and that there are 386 other unique values. Using this alone would make analysis difficult. If we want to utilize Model, we'll first need to normalize this into a new field where we mark all records where the model starts with a '1' as a '1-series', all that start with a '3' as a 3-series, etc. We'd have to be careful in doing this as we can see that not everything that starts with a '2' is a 2-series. For example, there are models listed as '2DR ....' or '4D ....'. In doing so, we still may find we are unable to categorize every model and would then need to exclude all of the missing or invalid records from analysis. 
+
+
+#####Vehicle eCode:
+```{r RevieweCode, echo=FALSE}
+SalesSub %>% 
+    group_by(eCode) %>% 
+    summarise(Cnt = n(), MinModelYr = min(Year), MaxModelYr = max(Year))
+```
++ BMW uses what they call an Engine Code (eCode for short) that actually categorizes models and year into groups of similar body styles. Here we would see multiple eCodes for the 3-series vehicles. But instead of all 2007-2017 3-series, an eCode may include only certain 3-series and only for a smaller model year window. Since BMW does marketing based on eCodes, we may want to start here instead of normalizing our models. The downside here is that we don't directly see what models/years are included in each eCode. However, this would be relevant to our customer. The biggest issue we have with this field though is that we are missing the eCode value for 161k of our 3.4 million records. This is about 5.5% so we still have data on the majority of records and could proceed.
+
+
+#####Pay Type:
+```{r ReviewPayType, echo=FALSE}
+SalesSub %>% 
+    group_by(PayType) %>% 
+    summarise(Cnt = n())
+```
++ PayType looks pretty good as is. We're missing values for only 5.7k records and the remaining are divided into the three main pay types: C=Cash, F=Finance, & L=Lease. Right away we can see that the majority of buyers, 43%, finance their purchase, but leasing, 30%, and paying in cash, 27%, aren't too far behind.
+
+
+#####NewUsed Flag:
+```{r ReviewNewUsed, echo=FALSE}
+SalesSub %>% 
+    group_by(NewUsed) %>% 
+    summarise(Cnt = n())
+```
++ NewUsed is used to designate if a vehicle purchased is either a New vehicle or a Used vehicle. But we are also seeing many other fields, such as O for Other, D for Demo, & F for Fleet. Some of the designations appear to be invalid or missing and others have unknown meaning - such as M & W. We could probably consider all non-New types as Used; however, since some of these may come with a New warranty and maintenance plan - being sold like a New vehicle type even though it's been used as a dealer demo, we'll exclude any sale not specifically designated as either New or Used.
+
+
+## New & Used Sales Data
+Let's now look at New vs Used sales for BMW vehicles across the Nation and within the four BMW regions. With this information, we can see if there are any national or regional trends that warrant further investigation. The first thing we'll do is subset our data to just include vehicle sales flagged as either New or Used as we discussed above. In this case, some of these Used vehicles may actually be Certified Pre-Owned (CPO) vehicles that have undergone additional inspections and include a warranty with purchase. Unfortunately, this information isn't available to us so we are unable to differentiate between these higher valued CPO vehicles and traditional Used vehicles.
+
+Let's go ahead and subset the New and Used only vehicles into their own table. We can also use this opportunity to whittle down our field list even further.
+```{r SalesNewUsed}
+SalesNewUsed <- 
+  subset (SalesSub, NewUsed=="N"|NewUsed=="U", select = c(BMWRegion, BMWMarket, VINID, Year, Make, Model, eCode, PurchDate, NewUsed, PayType, FinanceTerm, PurchasePrice, TradeVINID, TradeVIN, TradeYear, TradeMake, TradeModel, TradeECode) )
+
+```
+```{r removeSalesSub2Backup, echo=FALSE}
+rm(SalesSub2)
+```
+
+Now, all of our Purchase Dates are Month/Day/Year and over the course of 10-years this translates into a lot of data points. Because this would result in plots that are very difficult, if not impossible, to read and we don't really care about sales from one specific day vs another, we should pull apart our dates into separate purchase Month, Day, & Year columns. This will allow us to properly analyze the data.
+```{r AddYear&MoColumns}
+SalesNewUsed <- separate(SalesNewUsed, PurchDate, c("PurYear","PurMo","PurDay"), remove=FALSE)
+```
+
+While this is great for looking at either annual or seasonal trends (if we group by Months only), if we want to group by purchase Year and Month, we'll need to go one step further and combine those two separate columns into one new combined column. 
+```{r combineYrMo}
+SalesNewUsed <- unite(SalesNewUsed, PurYearMo, c(PurYear,PurMo), sep="-", remove=FALSE)
+```
+<!-- above could also be: SalesNewUsed %>% unite(PurYearMo, PurYear, PurMo, sep="-", remove=FALSE) -->
+
+Here we can see the final result of our split and combining efforts.
+```{r headsalesnu}
+head(SalesNewUsed)
+```
+
+<!-- # ```{r summarize1} -->
+<!-- #  -->
+<!-- # SalesNewUsed %>% -->
+<!-- #   select(PurYearMo, NewUsed, BMWRegion) %>% -->
+<!-- #   group_by(PurYearMo, NewUsed, BMWRegion) -->
+<!-- #   summarise(count(BMWRegion)) # not actually grouping.... still 3.4 million rows... adding summarize errors -->
+<!-- ``` -->
+
+
+Now that we have that all taken care of, let's take a cursory look at the Total BMW Vehicle Sales, as well as the breakouts for the New (N) vs Used (U) categories. 
+```{r plot1TotalbyPurchYear}
+
+options(scipen=3) #to show the y values as full numbers vs scientific (0e+00, 1e+05, etc)
+ggplot(SalesNewUsed, aes(x=PurYear)) +  
+  geom_histogram(stat="count", fill="blue") +
+  scale_y_continuous(limits = c(0,500000)) +
+  labs(title="BMW Vehicle Sales - Total", x="Purchase Year", y="Vehicles Sold")
+
+```
+
+
+
+
+```{r plot1NUbyPurchYear}
+
+ggplot(SalesNewUsed, aes(x=PurYear, fill=NewUsed)) +  
+  geom_histogram(stat="count", position = "dodge") +
+  labs(title="BMW Vehicle Sales - New vs Used", x="Purchase Year", y="Vehicles Sold")
+
+```
+
+We can see that BMW sales climbed between 2011 and 2014, but have once again steadied out. In regards to New vs Used, in 2009 the sales of New and Used were almost equal with New sales at their lowest during this 10-year period. From that point on; however, Used sales were fairly steady with New sales climbing rapidly. It's only in the last year or two do we see that Used sales are climbing again and New are on a decline. We saw this same occurrence from 2007 to 2009. This could point to the economy valuing Used or perhaps that their CPO (Certified Pre-Owned) program has become more appealing in recent years and has started to impact their New vehicle sales. On the plus side, total sales are still at their highest.
+
+
+Let's now take a look at some Regional data. We start by looking at total sales by region.
+```{r plot2TotalByRegion}
+
+ggplot(SalesNewUsed, aes(x=PurYear, fill=BMWRegion)) +  
+  geom_histogram(stat="count", position = "dodge") +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
+  labs(title="BMW Vehicle Sales by Region", x="Purchase Year", y="Vehicles Sold")
+
+```
+
+It's clear here that the Central region only accounts for a small portion of the sales. It's only around 50% of any of the other three Regions. Let's stack these bars to get an idea of each regions percentage of the annual total. Perhaps this will help us get a better visualization of how they compare.
+```{r plot2TotalByRegionStacked}
+ggplot(SalesNewUsed, aes(x=PurYear, fill=BMWRegion)) +  
+  geom_histogram(stat="count", position="fill") + # vs "stack"
+  scale_y_continuous(breaks=seq(0, 1, .1)) + #c(0,.1, .2, .3, .4, .5, .6, .7, .8, .9, 1.00)) +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
+  labs(title="BMW Vehicle Sales by Region", x="Purchase Year", y="Vehicles Sold")
+
+```
+  <!-- Can each color of each bar be labelled, preferrably with percents? -->
+  <!-- see https://rpubs.com/escott8908/RGC_Ch3_Gar_Graphs for value labels for "stack" -->
+
+So looking at this graph, we can see that each region is fairly consistent with it's contribution to sales over the years. The Western & Southern regions appear to pull in between 25% and 30%, with the Eastern region typically pulling ahead slightly with 25-35% of sales. The Central region by far is the notable region with sales always under 15%. It's clear from this plot that it's this region that could benefit from more specific marketing efforts.
+
+Now let's look at the Regional sales for New vs Used.
+```{r plot2NUByRegion}
+
+ggplot(SalesNewUsed, aes(x=PurYear, fill=BMWRegion)) +  
+  geom_histogram(stat="count", position = "dodge") +
+  facet_grid(. ~ NewUsed) +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
+  labs(title="BMW Vehicle Sales by Region", x="Purchase Year", y="Vehicles Sold")
+
+```
+
+Here we can observe that even within each region, we're seeing a similar curve that we saw with each of the New and Used sales graphs. We see that the Eastern Region generally takes the lead in both categories. However, we can also see that the Eastern Region's lead over the Southern & Western regions in total sales between 2010 and 2014 can be accounted for in nearly all New purchases. Their edge over the Southern & Western regions in Used sales is very minor. The Eastern region saw a decline in their New sales between 2014 and 2015 though, while the Southern & Western regions continued to climb. 2016 continued to result in a decline in New sales for each region, but this was offset by the increase in Used sales for each. BMW should refocus their efforts on selling New vehicles to try to turn around their declining trend, while trying to leverage their recent increase in Used sales.
+
+
+##Sales by eCode
+
+Let's now take a look at how sales are performing at an eCode level. Since this analysis could affect BMW's manufacturing choices, we really only need to look at New sales for this. Used sales would be based on the supply from what customer's are trading in and BMW would have very little influence on that. If we can determine how long it takes for a customer to trade-in their old vehicle, then perhaps we can look at predicting what vehicles will be available for resale in the future. The impact on this in regards to BMW's sales or manufacturing would be minimal so for now, let's focus on the New sales only. We can also remove any records where the eCode is not present. I also observed that two records has an eCode of R56. These are actually MINI vehicles so they must have been miscoded. We will exclude them as well. 
+
+```{r SubSalesNew}
+SalesNew <- subset(SalesNewUsed, NewUsed=='N'& eCode!="" & eCode!="R56") 
+```
+```{r summariseByECode}
+SalesNew %>%
+  #filter(eCode!="") %>%
+  group_by(eCode) %>%
+  summarise(cntSales = n()) %>%
+  arrange(cntSales)
+```
+We can plot this data as is, showing each eCode and the total volume color-coded by purchase year. This can give us a visual on which eCodes are selling well now as well as in the past. We will also be able to see some eCodes that have dropped out of production this way.
+```{r PlotNewbyECode1}
+options(scipen=3)
+ggplot(SalesNew, aes(x=eCode, fill=PurYear)) +
+  geom_bar() +
+  theme(axis.text.x = element_text(angle=90, vjust=.3, hjust=1)) + 
+  labs(title="BMW New Vehicle Sales by eCode", x="eCode", y="Vehicles Sold")
+```
+
+So looking at this graph, it's clear that the E90/91/92/93 eCode has outsold all others during this time period. From experience, I know that these are 3-series vehicles. But we can also reference this website to get a look at these eCodes for BMW and MINI, referred to on the web page as "Chassis Code": [http://www.burgertuning.com/BMW_chassis_codes.html]. This shows us that these were produced from roughly 2005-2013. Since our data starts at 2007 purchases, we may see a few 2006's in there, but it should mostly comprise of 2007-2013 model years. Interestingly enough, we see that the 2nd highest bar belongs to the F30. This too consists of 3-series models, but this time ranging from 2012-present model years. We can see too by the coloring, that the F90-93's stopped around 2012 and the F30's started around then. So even without converting our models into model categories, we can see that the 3-series has, by far, outsold any other BMW series over the last 10-years. This is likely due to it's lower price point and therefore affordability to a larger audience. The 3rd largest bar belongs to the F07/F10/F11 grouping. We can find that these belong to the 5-series models manufactured for 2009-2016.The E70's come in 4th - these are their 2007-2013 X5 models, which belong to the luxury SUV class of vehicles. This eCode was then replaced by the F15, representing the 2014-present X5's. That particular bar actually comes in 6th. The last notable bar (5th tallest) belongs to the F25's, which are the 2010-present X3's - also an SUV, but priced more moderately. The E83 bar, which is quite small (< 50,000), represents the earlier (2004-2010) X3's. Again, our data will represent mostly 2007-2010's in this count. 
+
+In order to compare complete model year ranges in all four categories, we need to find the earlier 5-series vehicles. Looking this up on the website, shows us that the E60/61 category included 5-series model up until 2010, so there was some cross-over with the F07/10/11's. Let's add those counts into our chart too. Scanning through the site's codes, I see that the F18's are also a 5-series sedan, but with a long wheel base. We should include these counts, but it appears we have none. And if we really want to make sure we're including everything, we can grab the E53's as well. These are 2000-2006 X5's and since we have counts for this eCode, albeit only 717, we can include them too.
+
+
+ | eCode Groups         | Model Years^ | Category Description | Total New Sales Count      |
+ |----------------------|--------------|----------------------|----------------------------|
+ | E90/91/92/93 & F30   | 2005-2016    | 3-series vehicles    | 670080 (*392370+277710*)   |
+ | F07/F10/F11 & E60/61 | 2003-2016    | 5-series vehicles    | 310819 (*227741+83078*)    |
+ | E70, F15 & E53       | 2000-2016    | X5 SUV's             | 262452 (*176578+85157+717*)|
+ | F25 & E83            | 2004-2016    | X3 SUV's             | 154102                     |
+				
+	^ Since our data is based on New sales purchased from 2007 to 2016, we may have some sales of model years older than 2007, but not many. For the most part, these counts represent 2007+ model years.
+		
+Now that we have all the counts for the top categories summarized, we can make some observations. The best-selling 3-series outsold the next highest category, the 5-series, by more than double! It's also interesting to point out here that while in the sedan/coupe category, the more moderately priced 3-series beat the higher priced 5-series, but in the SUV lineup, the more expensive X5's are the clear winner over the X3's with 63% of their SUV sales. 
+
+We can also take a look at the "Purchase Price" field for each of these categories. In order to get statistics for each group, we first need to create a new field to house those categories. Let's call this new field "VehCategory" & set these to "3-Series", "5-Series", "X5 SUV's", "X3 SUV's", and all remaining eCodes to "Others". 
+
+```{r AddVehCat}
+SalesNew <- SalesNew %>% 
+              mutate(VehCategory=eCode)
+   
+SalesNew <- SalesNew  %>% 
+               mutate(VehCategory=ifelse(VehCategory=="E90/91/92/93"|VehCategory=="F30","3-Series", VehCategory))  %>% 
+               mutate(VehCategory=ifelse(VehCategory=="F07/F10/F11"|VehCategory=="E60/61","5-Series", VehCategory)) %>% 
+               mutate(VehCategory=ifelse(VehCategory=="E70"|VehCategory=="F15"|VehCategory=="E53","X5 SUV's",VehCategory)) %>%
+               mutate(VehCategory=ifelse(VehCategory=="F25"|VehCategory=="E83","X3 SUV's",VehCategory)) %>%
+               mutate(VehCategory=ifelse(VehCategory!="3-Series" & VehCategory!="5-Series" & VehCategory!="X5 SUV's"& VehCategory!="X3 SUV's","Others",VehCategory)) 
+
+head(SalesNew)
+```		
+ 
+So now that we have our VehCategory field, let's check out both the average (mean) price, as well as the median (middle) price points. In order to do this correctly, we need to filter out all records without a purchase price. At this time, we can also exclude the "Others" category since it contains multiple categories & therefore the price comparisons won't be meaningful.  
+```{r SalesAvg}
+SalesNew %>%
+  filter(!is.na(PurchasePrice), VehCategory != "Others") %>%
+  group_by(VehCategory) %>%
+  summarise(AvgPurPrice=mean(PurchasePrice), MedianPurPrice=median(PurchasePrice), SalesCnt=n())
+```
+
+This confirms for us that our 3-Series and X3's are at the lower price points and the 5-Series and X5's are about $13,000 higher. But given we should review this data first to see if we have any outliers that should be removed. So let's make a new table first excluding the "Others" and those without a price.
+
+```{r SalesNewPop}
+SalesNewPop <- SalesNew %>%
+                  filter(VehCategory != "Others",!is.na(PurchasePrice)) 
+```
+
+Then we can review the minimum, mean, and maximum pricing for each category.
+```{r MinMeanMax}
+
+SalesNewPop %>%
+  group_by(VehCategory) %>%
+   summarise(minPrice=min(PurchasePrice), PriceMean=mean(PurchasePrice), maxPrice=max(PurchasePrice))
+
+```
+
+Well, it certainly looks like we have some bad data points remaining. We have minimums that are less than $0. Since these are new vehicles, we would expect to see a decent price point here. Now it's possible that some dealers are removing the price of a trade-in and only including the difference or they're entering a down payment or monthly payment instead. These will skew our data so we want to be sure to remove anything that is too low. With BMW, it's safe to say anything under $25,000 is too low, but to be sure, we can search this site for the Original MSRP on each category for the earliest model year:
+[http://usnews.rankingsandreviews.com/cars-trucks/bmw/3-series/2007]  $32,400 - $40,800; $32,700 - $49,500 for 2008
+[http://usnews.rankingsandreviews.com/cars-trucks/bmw/5-series/2008]  $44,600 - $58,800
+[http://usnews.rankingsandreviews.com/cars-trucks/bmw/x3/2007]  $38,000 - $38,000
+[http://usnews.rankingsandreviews.com/cars-trucks/bmw/x5/2007]  $45,900 - $54,500; $46,200 - $54,800 for 2008
+
+Unfortunately, they had no listings for 2007 5-series, but looking at the the 2007 to 2008 pricing on the 3-series and X5's, we can see that these would have only gone up by about $300, so we can assume the 2007 5-series started at $44,300. Now we also know that consumers don't always pay the MSRP so we don't want to use these as our minimums, but rather as a reference point. Let's go with 25% below MSRP as our starting point. 
+```{r mathlow, echo=FALSE, results="hide"}
+(32400.00*.75)
+(44300.00*.75)
+(38000.00*.75)
+(45900.00*.75)
+```
+
+On the other hand, we clearly have data points that are much too high, such as the $10,000,000 5-series. It's possible that some of the others were just missing their decimal points and are could be fixed by dividing those values by 10; however, since we don't want to assume this is the case, we should probably just exclude these as well. We also know that there is variation in the different model types within each category and a customer could have chosen to add on several upgrades. We can use the same website to check out the 2016 MSRP's for each.
+  3-Series: $33,150 - $63,500
+  5-Series: $50,200 - $94,100
+  X3: $38,950 - $46,800
+  X5: $54,700 - $98,800
+
+So we can see that the ranges for 2016 models have increased significantly over the available ranges in the 2007 models. For our upper end, let's do a similar 25% over the high end.
+
+```{r mathhigh, echo=FALSE, results="hide"}
+(63500*1.25)
+(94100*1.25)
+(46800*1.25)
+(98800*1.25)
+```
+```{r SalesNewPopExcLow}
+SalesNewPop <- SalesNewPop %>%
+                  filter(   (VehCategory=="3-Series" & PurchasePrice >= 24300 & PurchasePrice <= 79375)  | 
+                            (VehCategory=="5-Series" & PurchasePrice >= 33225 & PurchasePrice <= 117625) | 
+                            (VehCategory=="X3 SUV's" & PurchasePrice >= 28500 & PurchasePrice <= 58500)  | 
+                            (VehCategory=="X5 SUV's" & PurchasePrice >= 34425 & PurchasePrice <= 123500) )
+```
+```{r, echo=FALSE}
+# SalesNewPop %>%
+#   select(VehCategory, PurchasePrice, PayType) %>% 
+#   arrange(desc(PurchasePrice))
+head(SalesNewPop)
+```
+
+Now that we've removed our outliers, let's recheck our values.
+
+```{r RecheckMeanMedian}
+SalesNewPop %>%
+  group_by(VehCategory) %>%
+  summarise(AvgPurPrice=mean(PurchasePrice), MedianPurPrice=median(PurchasePrice), SalesCnt=n())
+```
+
+So we see that the values changed a little, more so with the Mean than with the Median, which is to be expected. But from here we can plot the sales prices to get a better idea of how they range within each category, as well as across the categories.
+
+```{r box, echo=FALSE}
+#boxplot(SalesNewPop$PurchasePrice ~ SalesNewPop$PurYear, xlab = "Purchase Year", ylab = "Purchase Price", main = "Purchase Price by Year")
+```
+
+```{r AvgPricePlot1Point}
+ggplot(SalesNewPop, aes(x=VehCategory, y=PurchasePrice)) +
+  geom_point(position = position_jitter(0.4)) +
+  stat_summary(fun.y=mean, geom="point") + 
+  labs(title="BMW New Sales Prices by Category", x="Vehicle Category", y="Purchase Price")
+```
+```{r AvgPricePlot2MeanBar}
+ggplot(SalesNewPop, aes(x=VehCategory, y=PurchasePrice)) +
+  stat_summary(fun.y=mean, geom="point") + 
+    stat_summary(fun.data = mean_sdl, fun.args = list(mult=1), geom="errorbar", width = 0.1) + 
+  labs(title="BMW New Sales Prices by Category", x="Vehicle Category", y="Purchase Price, mean and range")
+
+```
+
+Our first plot is very solid with more variance on the end points, especially evident with the X5's. The 2nd plot may be a bit easier for us to interpret since it better points out the Means along their ranges. But we are looking at a 10-year period here and as we saw above, that price point grew a lot over the last 10 years. Perhaps we'd be better breaking each of these up by Model Year. We can do this by first pulling out the data summaries that we may want to look at. Since we're using vehicle year, we should also make sure that those values are valid by excluding anything out of normal ranges, in this case I used 1980-2017. We can also exclude the "Others" category since we don't want to compare their pricing. 
+
+```{r summarizeForPlot}
+ SalesNewPopSumm <- SalesNewPop %>% 
+                      filter(Year>=1980 & Year<=2017 & VehCategory!="Others") %>% 
+                      group_by(VehCategory, Year) %>% 
+                      summarise(NumOfSales=n(), MinPrice=min(PurchasePrice), MedianPrice=median(PurchasePrice), AvgPrice=mean(PurchasePrice), MaxPrice=max(PurchasePrice))
+```
+
+
+Now let's take a closer look at how the sales counts compare to the mean purchase price for each model year and for each vehicle category.
+<!-- plot of what with circles that grow with count....? -->
+```{r PlotPricingByYear&Category}
+ggplot(SalesNewPopSumm, aes(x=Year, y=AvgPrice, size=NumOfSales, colour=VehCategory)) +
+  geom_point(alpha=.7) +  
+  scale_x_discrete(limits=seq(2002, 2017, by = 2)) + 
+  scale_colour_manual(values=c("#E69F00", "#D55E00","#56B4E9","#0072B2")) + 
+  labs(title="BMW New Sales for Popular Series", x="Model Year", y="Mean Purchase Price") 
+```
+<!-- # for geom_point() # color="navyblue" # for facet -->
+<!-- #"#000066", "#0000FF", "#009933", "#00CC66")) + # scale_colour_brewer(palette="Paired",direction=1) + # scale_colour_hue(l=80) + -->
+<!--  # facet_grid(. ~ VehCategory) + #VehCategory ~ .) +  -->
+<!--  # theme(panel.margin.y = unit(.5,"cm"), axis.text.x = element_text(angle=90, vjust=.3, hjust=1)) + #for facet -->
+<!--  # coord_fixed(ratio=1/7000) + #(ratio=1/20000) + for horiz facet # (ratio=1/1200) + for vert facet -->
+
+So here we can now see that over the last 10-years, the average price relative to the volume of sales for each model year of our four most popular vehicle categories. The orange colors represent the sedans/coupes & the blue colors are the SUV's. Now since our data represents Jan 1st 2007 through Dec 31st 2016 sales, we see that the number of sales for models prior to 2007 or after 2016 are relatively small. This is to be expected given our New sales date ranges, so our primary focus should be on the 2007 to 2016 model years, but this still can give us an idea of the prices at which the other model years sold. The older model years could have been heavily discounted though since they're selling past their intended model year roll-out, so we don't want to put too much stock in those prices. 
+
+It is interesting to note the drop in the mean pricing of the sedan/coupes (orange colors) from 2013 to 2014 model years. It's quite significant, especially in the 3-series. Perhaps they dropped specific models within those series. We do see that for 2016, the 5-series price jumped considerably and the number of sales dropped with it. The decrease in sales for the 3-series could be offset by the increase in sales of the X3 SUV - indicating a move of consumer preference from sedans/coupes to SUV's. We can see that the X3's have done a fairly stead job of increasing sales. Since we learned earlier that in 2016 BMW's New sales went down, with Used sales making up the loss, it's not a surprise to see the smaller points appear in 2016. 
+
+Another interesting point is the large volume of sales for the 2011 3-series. The points before and after are fairly similar, but this one is much larger. Perhaps the majority of New sales increase from 2010 to 2011 can be explained by a push of these models by BMW or perhaps by the large jump in price of the 5-series models during that same time.  
+
+
+### Side Note on the eCodes by PurYear
+
+If we were to look back at our initial count summary, we have eCodes with sales in only the hundreds, while there are many others that are over 100,000. Of course, this is grouping all 10-years together so this summary won't give us an idea of how the counts have changed over time. In order to do that, we need to consider the purchase year as well. Let's group this out by eCode and PurYear.
+
+```{r SummarizeByECodePurYr}
+SalesNew %>%
+  group_by(eCode, PurYear) %>%
+  summarise(cntSales = n()) %>%
+  arrange(PurYear, cntSales)
+```
+
+So now we can see that we still have some eCodes that had very low sales volumes within each year. In order to produce a cleaner plot, we can ignore the records where the counts for that eCode and PurYear are under 900 and focus on those that had higher sales volumes. I've chosen 900 since for most years we go from one eCode with no more than say 500 or 600 and then jump to the next with closer to 2000. There was one year where we had counts at 955 so I want to include them.
+
+```{r PlotDataGroupBy&Filter}
+ECodePlot <- SalesNew %>%
+              group_by(eCode, PurYear) %>%
+              summarise(cntSales = n()) %>%
+              arrange(PurYear, cntSales) %>%
+              filter(cntSales >= 900)
+```
+
+```{r PlotNewbyECode2}
+options(scipen=3)
+ggplot(ECodePlot, aes(x=eCode, fill=PurYear)) +
+  geom_bar() +
+  theme(axis.text.x = element_text(angle=90, vjust=0.2, hjust=1)) + 
+  labs(title="BMW Vehicle - Model Year Production by eCode", x="eCode", y="# of Years Produced")
+ 
+```
+
+This plot shows us which years the most popular eCodes were produced. 
+
+
+## Predicting 'New' Sales for 2017
+
+Now let's see if we can use our data to predict 2017 New sales. First we need to create a new data set to use for our predictions. We'll stick to only New sales again, but let's keep in the "Others" category. I'm also going to limit this data to just model years of 2006 and newer since the calendar year of 2007 would have seen the release of the new 2008's, any 2006's here would have been old inventory. I'm primarily interested in total sales, but in case we want to dig deeper, I'm grouping this into many categories using VehCategory, BMWRegion, as well as PurYearMo, and just PurYear. From there, I can further summarize the data to just look at just Total, just Regional, or just VehCategory statistics & use those tables from my modelling.
+
+
+```{r DataForNewSalesPred}
+SalesNewForPredModel <- 
+    SalesNew %>% 
+      filter(Year >= 2007) %>% 
+        group_by(PurYear, PurYearMo, BMWRegion, VehCategory) %>% 
+          summarise(SalesCnt=n())
+head(SalesNewForPredModel)
+```
+Now we did gather some Purchase Price summary data earlier, but I'm not going to include any purchase price data since, as we saw before, it varies greatly within each vehicle category and our pricing data wasn't consistent enough to use as a factor in determining sales counts.
+
+Now we can get our sales data into the summary level we want to model first and then add in the economic data. The main thing we're looking for here is just overall BMW sales. So we can re-summarize our table 'SalesNewForPredModel' to be grouped by YearMo. Instead of counting the sales, we now need to sum the already grouped counts.  
+
+```{r SumamrizeTotalSalesByYearMo}
+
+ SalesForModelByYearMo <-   
+    SalesNewForPredModel %>% 
+      group_by (PurYearMo) %>% 
+        summarise(SalesCnt=sum(SalesCnt))
+
+```
+
+
+So in addition to our sales counts, we'll also need to add some economic factors in order to help create a model that can be used to predict sales. These will be all of our Independent variables. To do this, I've pulled data from Quandl from the "Federal Reserve Economic Data" databases [https://www.quandl.com/data/FRED-Federal-Reserve-Economic-Data?keyword=] and compiled them into a single csv since all values are based on the first of each month. This will make it easier to manage the data and combine it with our sales data.
+
+```{r ReadQuandlData}
+EconData <- read.csv("EconomicData.csv", stringsAsFactors = FALSE, as.is=TRUE, colClasses=c("Year"="character", "Mo"="character")) 
+```
+
+Now that we have our data imported, let's review the fields it contains.
+
+* PrimeRate - the U.S. Prime Interest Rate posted by a majority of top-25 commercial banks
+* Auto48MoRate - the Finance Rate on Consumer Installment Loans at Commercial Banks for NEW AUTO 48 month loans
+* CPI_ALL - Consumer Price Index for all urban consumers, all items (including food and energy), seasonally adjusted 
+* RealDispIncoBillions - Real Disposable Personal Income in Billions of Dollars, seasonally adjusted annual rate
+* PersConsBillions - Personal Consumption Expenditures in Billions of Dollars, seasonally adjusted annual rate
+* PerSavRate - Personal Savings Rate, personal savings as a percent of disposable income, seasonally adjusted annual rate
+* UnempThousands - Unemployment, Thousands of Persons, age 16yrs or older, seasonally adjusted
+* USAutoSalesThousUnadj - Motor Vehicle Retail Sales: Domestic & Foreign Autos, Thousands of Units, NOT seasonally adjusted annual rate
+* USAutoSalesMillionsAdj - Motor Vehicle Retail Sales: Domestic & Foreign Autos, Millions of Units, seasonally adjusted annual rate
+
+We have two versions of the U.S. Automotive sales. One is seasonally adjusted and the other is not. Which do we choose? Well, since our BMW New Sales counts are NOT seasonally adjusted and we want to be able to compare the total U.S. Auto sales with the BMW vehicle sales, we should keep them the same.
+
+Let's take a quick look at our two tables before joining them so that we make sure we have the correct fields being matched.
+
+```{r ReviewBeforeJoining}
+head(EconData) 
+head(SalesForModelByYearMo)
+```
+
+In this case, we want to match the Sales data's 'PurYearMo' to the Econ data's 'YearMo'. We can do a left join on these to grab everything from our Sales table and any matches to our Econ table. We'll put this into it's own table as well & see what returns. 
+```{r JoinEconWithTotalSalesByYearMo}
+SalesEconForModelByYearMo <-
+  left_join(SalesForModelByYearMo,EconData,by=c("PurYearMo" = "YearMo"))  # will match S.a to E.b & only keep S.a
+
+head(SalesEconForModelByYearMo)
+
+```
+
+Well, we don't want to utilize the individual 'DATE', 'Year', or 'Mo' fields from the Econ data as these would not be independent variables, plus we already have the 'PurYearMo' field. So let's remove those before we build our model.
+```{r RemoveNonVariables}
+SalesEconForModelByYearMo <- 
+  select(SalesEconForModelByYearMo, -(DATE:Mo))
+```
+
+Alright, we're now ready to start on our model. We should start by splitting the data into a 'training' and 'test' data set. We'll do this by Purchase Year of less than 2014 for the training (7 years total) and then greater than or equal to 2014 for the testing data (3 years total). 
+
+```{r TrainTestData}
+
+SalesTrain <- subset(SalesEconForModelByYearMo, PurYearMo<="2013-12")
+SalesTrain
+
+SalesTest <- subset(SalesEconForModelByYearMo, PurYearMo>="2014-01")
+SalesTest
+```
+
+
+Now let's look at all our variables and see if we can spot in multi-collinearity among them. 
+```{r correlation}
+cor(select(SalesTrain, -PurYearMo))
+```
+
+One may have thought that the Prime Rate and the 48-Month New Automotive Loan Rate would have been highly correlated. While they are pretty high, 0.72, the Prime Rate appears to correlate higher with the Unemployment Level, 0.87, and the Auto Loan Rate has extremely high correlations with both the Consumer Price Index (CPI_ALL), -0.97, and Personal Consumption, 0.96. And those two have a correlation of 0.97. Since we're dealing with New Sales and we learned before that 43% of the BMW buyers financed their purchase, this is a variable we want to keep in. We may be able to remove the other too. As expected, Real Disposable Income and Personal Consumption are highly correlated at 0.91. Interestingly enough, our SalesCnt doesn't have a high correlation with any of the variables. 
+
+Now that we've taken a quick look at correlation, we can run a linear regression model using all our variables. The SalesCnt will be our Dependent variable and the rest our Independent variables.
+
+
+```{r LinReg1}
+
+lin1 <- lm(SalesCnt ~ PrimeRate + Auto48MoRate + CPI_ALL + RealDispIncoBillions + PersConsBillions + PerSavRate + UnempThousands + USAutoSalesThousUnadj,  data=SalesTrain)
+summary(lin1)
+
+```
+
+Wow! So it looks like the only significant variable is the overall U.S. automotive sales. Perhaps we have too many other variables, so before we rely solely on this variable, let's see what happens if we start removing some of them. We'll start by removing some of the variables that were highly correlated. We discussed how the Auto Loan Rate has extremely high correlations with both the Consumer Price Index (CPI_ALL), -0.97, and Personal Consumption, 0.96. So let's remove both the CPI and the Personal Consumption variables. Disposable Income was also quite high with all three of those, around 90%, but for now, we'll keep it in.
+
+```{r LinReg2}
+lin2 <- lm(SalesCnt ~ PrimeRate + Auto48MoRate + RealDispIncoBillions + PerSavRate + UnempThousands + USAutoSalesThousUnadj,  data=SalesTrain)
+summary(lin2)
+```
+
+So it's interesting to note here that our Adjusted R-squared value dropped ever so slightly from 0.5765 to 0.5724, but we have picked up two slightly significant variables - the Intercept and the Disposable Income. But I'm still curious as to what would happen if we remove the Disposable Income since it does have a higher correlation with the Auto Loan Rate.
+
+```{r LinReg3}
+lin3 <- lm(SalesCnt ~ PrimeRate + Auto48MoRate + PerSavRate + UnempThousands + USAutoSalesThousUnadj,  data=SalesTrain)
+summary(lin3)
+```
+
+So with Disposable Income removed, we saw no changes in our values, which means that it was a good choice for removal in this particular case, but perhaps the Auto Loan Rate is actually less significant than the Disposable Income. Let's see what happens when we keep our USAutoSales and add just the AutoLoan or just the DispIncome.
+
+```{r LinReg4}
+lin4 <- lm(SalesCnt ~ RealDispIncoBillions + USAutoSalesThousUnadj,  data=SalesTrain)
+summary(lin4)
+```
+```{r LinReg5}
+lin5 <- lm(SalesCnt ~ Auto48MoRate + USAutoSalesThousUnadj,  data=SalesTrain)
+summary(lin5)
+```
+ 
+Alright, we can see that both show as very significant, but we have a higher Adjusted R-squared value when we keep the Disposable Income. And this makes intuitive sense since we'd expect sales to increase when people have more disposable income. And while auto loan rates could still play a part in some people's decision to buy or not, it won't in many others. So what happens if we run our model with just these three?
+
+```{r LinReg6}
+lin6 <- lm(SalesCnt ~ Auto48MoRate + RealDispIncoBillions + USAutoSalesThousUnadj,  data=SalesTrain)
+summary(lin6)
+```
+
+The Auto Rate becomes insignificant despite the fact that our Adjusted R-squared increased by nearly 0.03 points. 
+
+So, it looks like we have a good base model using just the Auto Sales and the Disposable Income, but let's see if we can improve upon it by adding in some of the other variables one at a time. I'll leave out the two values that were very highly correlated with the auto loan sales though since we'd expect to see a similar reaction as we did when we added the Auto Loan Rate.
+
+
+```{r LinReg7}
+lin7 <- lm(SalesCnt ~ PrimeRate + RealDispIncoBillions + USAutoSalesThousUnadj,  data=SalesTrain)
+summary(lin7)
+```
+```{r LinReg8}
+lin8 <- lm(SalesCnt ~ PerSavRate + RealDispIncoBillions + USAutoSalesThousUnadj,  data=SalesTrain)
+summary(lin8)
+```
+```{r LinReg9}
+lin9 <- lm(SalesCnt ~ UnempThousands + RealDispIncoBillions + USAutoSalesThousUnadj,  data=SalesTrain)
+summary(lin9)
+```
+
+Alright, so both Unemployment and Prime Rate increase our Adjusted R-squared, but neither proves to be significant. The Personal Savings Rate, on the other hand, is showing to be somewhat significant and increases our Adjusted R-squared value to 0.58 - the highest of all previous models, so we'll keep that one in. 
+
+
+```{r calcRMSE}
+SSE <- sum(lin8$residuals^2)
+SSE
+
+RMSE <- sqrt(SSE/nrow(SalesTrain))
+RMSE
+
+AvgSalesMo <- mean(SalesTrain$SalesCnt)
+AvgSalesMo
+
+RMSE/AvgSalesMo
+
+```
+
+So on average, we make an error of 2059 sales in a month, a 13% swing in either direction. This doesn't seem to be the best predictive model, but it is the best one we have based on the data we have available to us. With that in mind, let's use our model to see if we can use it to predict sales. For this, we'll use our testing data set.
+
+```{r Prediction}
+SalesPredict <- predict(lin8, newdata = SalesTest) 
+SalesPredict
+```
+
+So this output list shows the sales predictions for each of the months in our test data set (Jan 2014 through Dec 2016), but how well did our model do? We can calculate the out-of-sample R-squared value. When we have that, we can compare it to the RMSE we calculated for our model above. Ideally the error would not have changed significantly.
+
+```{r predictedRMSE}
+
+pSSE <- sum((SalesPredict - SalesTest$SalesCnt)^2) # predictions - test actuals
+pSST <- sum((mean(SalesTrain$SalesCnt)-SalesTest$SalesCnt)^2) #avg train actuals - test actuals
+pR2 <- 1 - pSSE/pSST
+pRMSE <- sqrt(pSSE/nrow(SalesTest))
+pRMSE
+RMSE
+```
+
+Based on our test data set from the last three years, our RMSE has quadrupled & we now have a 56% spread of error! This means that our linear regression model from our testing set is not a good fit to predict the future sales of BMW's. Unfortunately, it doesn't look like any of the data we have is a good way to predict future BMW sales. We may be able to build a decent model using data from all years from three of the regions and using the fourth region as our testing data. However, our goal was to try to predict future sales, and that approach would not do that for us. 
+
+
+
+```{r woEconData, echo=FALSE}
+# cor(SalesNewPopSumm$NumOfSales, SalesNewPopSumm$Year)
+# cor(SalesNewPopSumm$NumOfSales, SalesNewPopSumm$MedianPrice)
+# cor(SalesNewPopSumm$NumOfSales, SalesNewPopSumm$AvgPrice)
+#cor(SalesNewPopSumm$NumOfSales, as.factor(SalesNewPopSumm$VehCategory))
+#Note:
+#lin2 <- lm(NumOfSales ~ Year + AvgPrice, data=SalesNewPopSumm)
+# summary(lin2) # > Adjusted R-squared:  0.04062 
+#lin3 <- lm(NumOfSales ~ Year + AvgPrice, data=SalesNewPopSumm)
+# summary(lin3) # > Adjusted R-squared:  0.04062 
+```
+
+
+##Pitfalls of the data set
+
+* Not all BMW stores have provided access to their Sales data so the analysis is limited by dealership participation. 
+* The PurchasePrice could vary from dealer to dealer in how they're entering the values. If it includes the sales price negotiated for the vehicle or if trade-in's are removed from the total. This could also vary based on the data management software the dealership uses. This makes the values calculated less reliable as a true sales price, but by eliminating most of the outliers, we should still get a decent representation of pricing.
+* We do not have enough demographic data on the customers - gender, birth date, etc - to use this as part of our analysis or prediction model. 
+
+
+##Additional Areas for Exploration
+
+* Break down trends by BMW Market
+    + We saw that many of the Regional trends mirrored the National, but what about within each Market? We could dig into this further to see if the same holds true or if there's more variablilty from Market to Market within each Region.
+* Vehicle Categories by Gender &/or Age (using birth date)
+    + Even though we have very limited Gender data, and likely birth date date, we could still disect the data we do have and see if there are any trends or preferences within each gender or in age groups. Which vehicle categories appeal to the younger market and which to the older? Are females buying more of the SUV's than males?
+* Repeat vs First-time Buyers
+    + Here we can make good use of the trade VIN data. We can look at what make they traded to see if it was an older BMW, indicating brand loyalty, or another make, indicated a converted & possibly first-time owner. We could also look beyond the trade VIN data, by checking out the number of distinct VINs owned by each CustomerID. This would be able to get us a minimum number of VINs, but not necessarily the whole picture. Due to possible changes in the system that a dealer uses to manage their database, the CustomerIDs can change over time. This means that a single customer may actually have more than one CustomerID and be seen as 2 or more unique customers. More elaborate customer matching, based on name & address, could be done to try to remedy some of these issue, but there is still room for error based on how a name or address is typed into the system. For example, "Jim" vs "James" or "1234 Main Street" vs "1234 Main St.". Using CustomerID will also not allow us to see if the same customer purchases at more than one BMW dealership since these values are unique to each dealership. So while we can try to view this within the scope of each dealership, we'd have a harder time getting true values since we wouldn't be able to accurately apply this to all BMW dealerships as a whole.
+* Length of Vehicle Ownership
+    + If we have a subsequent sales transaction on the vehicle or the VIN being listed by the same customer as being traded in, then we'd have a firm length of ownership. If there is no additional sales record though, we'd have a difficult time ascertaining this data. We could try to turn to the service history, which our company also collects, to see when they last serviced it. But many dealers use different CustomerID's for sales than they do for service so matching these would be difficult. And as mentioned above, even the CustomerID's within the service history at a single dealership can be dicey. We'd also have to take into consideration that even if we can match service data with a sales records, we still wouldn't know their true ownership time because we wouldn't know if they still own the vehicle and perhaps are servicing it elsewhere, or have since sold it, either privately or traded it in for competing make. Because of these unknowns, it would be difficult to get accurate ownership time frames unless we had multiple sales records on hand.
+
+
+##Summary
+In conclusion, while we've been able to explore our data and visualize trends in our sales data, we have been unsuccessfully been able to predict sales using any of the economic values we've obtained. Ideally, we would have had access to personal information about each of the buyers, such as income, occupation, home value, ethnicity, gender, and birth date, that may have been able to lead us to a better model. We may have found that what affected the nation as a whole, may not have affected the BMW customers as much. Due to the higher price points of the BMW lineup and the fact that a large number of buyers (27%) paid in cash, we can conclude that, in general, BMW buyers are probably upper class with a higher income than the national average.
+
+We can also see that the BMW sales are trending up as a whole, although fairly stagnant at the moment. This could suggest that sales will start to pick up again in 2017 or 2018. The New sales have been on a slight decline in recent years, but we also saw a similar drop in the first few years of our analysis, after which their sales rose for six straight years. Since we don't have data prior to 2007 in our graphs, we don't see how long that downward trend continued before the rise, but it does appear that their New sales are cyclical. We should expect to see them rise again in the next few years. Used sales trends were less volatile than the New. They only had one year where the counts declined, and even then, only sightly, so we can predict that Used sales will continue to rise. We also learned that the 3-series models have been, by far, BMW's biggest seller. To boost volume of New sales, they may want to put their marketing focus here. And while in the sedan/coupes category, the moderately priced version won out, in the SUV category, customers are opting for the more expensive models. BMW could explore upselling their existing 3-series or X3 customers to the higher priced 5-series and X5's. Or they could look at increased marketing of their SUV lineup to owners of other SUV brands. 
+
+We still have many more areas for exploration with our data, which could lead to more insights into the trends happening in the BMW market. We could also continue to explore other ways to try to predict future values, perhaps finding one that will prove more useful.  
+
+
